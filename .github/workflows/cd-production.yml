@@ -1,0 +1,54 @@
+name: Production Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Defense in depth: re-run CI before deploying in case of direct push.
+      - name: Run CI
+        run: pnpm run ci
+
+      - name: Apply pending D1 migrations
+        run: pnpm run migrate:remote
+
+      - name: Deploy Worker
+        run: pnpm run deploy
+
+      - name: Set SYNC_SECRET
+        run: echo "${{ secrets.SYNC_SECRET }}" | pnpm exec wrangler secret put SYNC_SECRET
+
+      - name: Deployment summary
+        run: |
+          {
+            echo "## Production deployment"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Actor | @${{ github.actor }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

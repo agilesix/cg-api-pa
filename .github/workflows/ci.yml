@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ci
+      - run: pnpm audit --prod
+
+      # Spec compliance — known CLI discrepancies documented in
+      # docs/known-spec-discrepancies.md (see HHS/simpler-grants-protocol#735).
+      # Runs so regressions surface in the diff but doesn't block merges.
+      - name: Check spec compliance
+        run: pnpm run check:spec
+        continue-on-error: true
+
+      - name: Upload OpenAPI spec
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: dist/openapi.json
