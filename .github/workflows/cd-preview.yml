@@ -40,8 +40,9 @@ jobs:
           header: preview-deploy
           message: |
             **Preview deployed** for PR #${{ github.event.pull_request.number }}
-            Worker: `pa-commongrants-api` (env: `preview`)
-            D1: `${{ steps.preview.outputs.db_name }}` (`${{ steps.preview.outputs.db_id }}`)
+            🔗 **${{ steps.preview.outputs.url }}**
+            Worker: `pa-commongrants-api-pr-${{ github.event.pull_request.number }}`
+            D1: `${{ steps.preview.outputs.db_name }}`
             Commit: `${{ github.sha }}`
 
   cleanup:
