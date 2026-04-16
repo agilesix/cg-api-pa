@@ -48,7 +48,7 @@ rm -f wrangler.jsonc.bak
 echo "  ✓ Patched"
 
 echo "→ Applying migrations to ${DB_NAME}"
-${WRANGLER} d1 migrations apply "${DB_NAME}" --remote --yes --env preview
+${WRANGLER} d1 migrations apply "${DB_NAME}" --remote --env preview
 echo "  ✓ Migrations applied"
 
 echo "→ Deploying preview Worker"
