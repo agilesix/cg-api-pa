@@ -1,0 +1,58 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pa-commongrants-api",
+  "main": "src/index.ts",
+  // Latest stable compatibility date at time of scaffolding. See:
+  // https://developers.cloudflare.com/workers/configuration/compatibility-dates/
+  "compatibility_date": "2026-03-20",
+  "compatibility_flags": ["nodejs_compat"],
+  // Naming convention: {state}-grants-{purpose}. Encodes state + data domain +
+  // purpose, avoids collisions with other D1/R2 resources in the same CF
+  // account when this template is forked for other states (e.g. ca-grants-*).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pa-grants-commongrants",
+      "database_id": "b7ed4d73-17be-45b5-9c19-0352c7ed1cbd",
+      "migrations_dir": "src/storage/sql/migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SNAPSHOTS",
+      "bucket_name": "pa-grants-raw-snapshots",
+    },
+  ],
+  "triggers": {
+    // Sync every 4 hours. Adjust as PA update cadence is better understood.
+    "crons": ["0 */4 * * *"],
+  },
+  "vars": {
+    "PA_API_BASE_URL": "https://egrants-apibeta.azurewebsites.net/api/grants/",
+    "ENVIRONMENT": "production",
+  },
+  "observability": {
+    "enabled": true,
+  },
+
+  // Preview environment — used by CI preview deploys (PRs).
+  // D1 database is ephemeral: created per-PR by cd.yml, torn down on close.
+  // The database_id is patched dynamically by the workflow before deploy.
+  // R2 bucket is shared (snapshots are append-only / idempotent).
+  "env": {
+    "preview": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "pa-grants-preview",
+          "database_id": "PATCHED_BY_CI",
+          "migrations_dir": "src/storage/sql/migrations",
+        },
+      ],
+      "vars": {
+        "PA_API_BASE_URL": "https://egrants-apibeta.azurewebsites.net/api/grants/",
+        "ENVIRONMENT": "preview",
+      },
+    },
+  },
+}

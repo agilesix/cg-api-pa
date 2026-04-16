@@ -1,0 +1,63 @@
+{
+  "name": "@common-grants/api-pa",
+  "version": "0.1.0",
+  "description": "A CommonGrants-compliant HTTP API that surfaces Pennsylvania eGrants data",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "bootstrap": "tsx scripts/bootstrap.ts",
+    "build": "tsc",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "lint": "eslint . --fix",
+    "check:lint": "eslint .",
+    "format": "prettier --write .",
+    "check:format": "prettier --check .",
+    "check:types": "tsc --noEmit",
+    "check:spec": "pnpm run openapi:export && cg check spec dist/openapi.json",
+    "checks": "pnpm run check:lint && pnpm run check:format && pnpm run check:types",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "ci": "pnpm run checks && pnpm run build && pnpm run test",
+    "migrate": "wrangler d1 migrations apply pa-grants-commongrants --local",
+    "migrate:remote": "wrangler d1 migrations apply pa-grants-commongrants --remote --yes",
+    "migrate:preview": "wrangler d1 migrations apply pa-grants-commongrants-preview --remote --yes --env preview",
+    "db:codegen": "kysely-codegen --dialect sqlite --url .wrangler/state/v3/d1/pa-grants-commongrants/db.sqlite --out-file src/storage/sql/schema.ts",
+    "wrangler:types": "wrangler types",
+    "sync": "tsx scripts/sync.ts",
+    "openapi:export": "tsx scripts/export-openapi.ts",
+    "example:parse": "tsx examples/parse-opportunity.ts"
+  },
+  "dependencies": {
+    "@common-grants/sdk": "^0.4.0",
+    "@hono/zod-openapi": "^0.19.10",
+    "hono": "^4.12.14",
+    "kysely": "^0.28.16",
+    "uuid": "^13.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.14.7",
+    "@cloudflare/workers-types": "^4.20260415.1",
+    "@common-grants/cg-grants-gov": "^0.1.0",
+    "@common-grants/cli": "^0.3.1",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "eslint": "^10.2.0",
+    "eslint-config-prettier": "^10.1.8",
+    "kysely-codegen": "^0.20.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.58.2",
+    "vitest": "^4.1.4",
+    "wrangler": "^4.83.0"
+  }
+}
