@@ -55,21 +55,35 @@ export class SqliteOppRepo implements IOppRepo {
   async search(params: OpportunitySearchParams): Promise<PaginatedResult<StoredOpportunity>> {
     const filters = params.filters;
 
-    // If there's a text query, restrict to FTS-matching rowids first.
-    const matchingRowIds = params.query ? await this.searchByText(params.query) : null;
-    if (matchingRowIds !== null && matchingRowIds.length === 0) {
+    // Sanitize the FTS query upfront (if provided).
+    const ftsMatch = params.query ? sanitizeFtsQuery(params.query) : null;
+    if (params.query && ftsMatch === null) {
       return { items: [], total: 0 };
     }
 
-    let countQuery = this.db
-      .selectFrom('opportunities')
-      .select((eb) => eb.fn.countAll().as('count'));
-    let rowQuery = this.db.selectFrom('opportunities').selectAll();
+    // When there's a text query, INNER JOIN the FTS virtual table so SQLite
+    // filters at the engine level. This uses a single bound parameter for the
+    // MATCH expression instead of N rowid placeholders — avoiding D1's
+    // 999-parameter cap.
+    //
+    // The FTS virtual table isn't in the Kysely schema, so the join branch
+    // is typed via `any`. The join is safe: opportunities_fts is a
+    // content-sync'd FTS5 table whose rowid maps 1:1 to opportunities.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- FTS table not in Kysely schema
+    let countQuery: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let rowQuery: any;
 
-    // FTS rowid restriction.
-    if (matchingRowIds !== null) {
-      countQuery = countQuery.where(sql`rowid`, 'in', matchingRowIds);
-      rowQuery = rowQuery.where(sql`rowid`, 'in', matchingRowIds);
+    if (ftsMatch !== null) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+      const ftsBase = (this.db.selectFrom('opportunities') as any)
+        .innerJoin('opportunities_fts', sql`opportunities.rowid`, sql`opportunities_fts.rowid`)
+        .where(sql`opportunities_fts`, 'match', ftsMatch);
+      countQuery = ftsBase.select((eb: any) => eb.fn.countAll().as('count')); // eslint-disable-line @typescript-eslint/no-explicit-any
+      rowQuery = ftsBase.selectAll('opportunities');
+    } else {
+      countQuery = this.db.selectFrom('opportunities').select((eb) => eb.fn.countAll().as('count'));
+      rowQuery = this.db.selectFrom('opportunities').selectAll();
     }
 
     // Status filter — supports `in` and `notIn`.
@@ -92,10 +106,12 @@ export class SqliteOppRepo implements IOppRepo {
       if (dateRange.operator === 'outside') {
         // Outside = NOT BETWEEN min AND max.
         if (min) {
-          countQuery = countQuery.where((eb) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          countQuery = countQuery.where((eb: any) =>
             eb.or([eb('close_date', '<', min), eb('close_date', '>', max ?? '9999-12-31')]),
           );
-          rowQuery = rowQuery.where((eb) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rowQuery = rowQuery.where((eb: any) =>
             eb.or([eb('close_date', '<', min), eb('close_date', '>', max ?? '9999-12-31')]),
           );
         }
@@ -128,10 +144,12 @@ export class SqliteOppRepo implements IOppRepo {
 
       if (filter.operator === 'outside') {
         if (minCents !== null && maxCents !== null) {
-          countQuery = countQuery.where((eb) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          countQuery = countQuery.where((eb: any) =>
             eb.or([eb(column, '<', minCents), eb(column, '>', maxCents)]),
           );
-          rowQuery = rowQuery.where((eb) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rowQuery = rowQuery.where((eb: any) =>
             eb.or([eb(column, '<', minCents), eb(column, '>', maxCents)]),
           );
         }
@@ -242,23 +260,20 @@ export class SqliteOppRepo implements IOppRepo {
       .where('id', '=', runId)
       .execute();
   }
+}
 
-  /**
-   * SQLite FTS5 backend for text search. **Isolated here intentionally** — a
-   * Postgres port replaces this method with `tsvector` / `tsquery` and every
-   * other method remains unchanged. See PORTING.md.
-   */
-  private async searchByText(query: string): Promise<number[]> {
-    const sanitized = query.trim().replace(/["']/g, ' ').trim();
-    if (sanitized === '') return [];
-    const ftsQuery = `"${sanitized}"*`;
-    const rows = await this.db
-      .selectFrom('opportunities_fts' as never)
-      .select([sql<number>`rowid`.as('rowid')])
-      .where(sql`opportunities_fts`, 'match', ftsQuery)
-      .execute();
-    return rows.map((r: { rowid: number }) => r.rowid);
-  }
+/**
+ * Sanitize a user-provided search string into an FTS5 MATCH expression, or
+ * return `null` if the input is empty after sanitization.
+ *
+ * **Isolated here intentionally** — a Postgres port replaces this with
+ * `plainto_tsquery()` and the INNER JOIN in `search()` becomes a
+ * `tsvector @@ tsquery` WHERE clause. See PORTING.md.
+ */
+function sanitizeFtsQuery(query: string): string | null {
+  const sanitized = query.trim().replace(/["']/g, ' ').trim();
+  if (sanitized === '') return null;
+  return `"${sanitized}"*`;
 }
 
 function rowToStored(row: OpportunitiesRow): StoredOpportunity {
