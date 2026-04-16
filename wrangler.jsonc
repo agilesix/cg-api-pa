@@ -49,6 +49,12 @@
           "migrations_dir": "src/storage/sql/migrations",
         },
       ],
+      "r2_buckets": [
+        {
+          "binding": "SNAPSHOTS",
+          "bucket_name": "pa-grants-raw-snapshots",
+        },
+      ],
       "vars": {
         "PA_API_BASE_URL": "https://egrants-apibeta.azurewebsites.net/api/grants/",
         "ENVIRONMENT": "preview",

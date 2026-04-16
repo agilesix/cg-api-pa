@@ -24,7 +24,7 @@
     "checks": "pnpm run check:lint && pnpm run check:format && pnpm run check:types",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "ci": "pnpm run checks && pnpm run build && pnpm run test",
+    "ci": "pnpm run wrangler:types && pnpm run checks && pnpm run build && pnpm run test",
     "migrate": "wrangler d1 migrations apply pa-grants-commongrants --local",
     "migrate:remote": "wrangler d1 migrations apply pa-grants-commongrants --remote --yes",
     "migrate:preview": "wrangler d1 migrations apply pa-grants-commongrants-preview --remote --yes --env preview",
