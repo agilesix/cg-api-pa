@@ -11,7 +11,7 @@ export interface PaginationInfo {
 export interface SearchResult {
   items: PaOpportunityInput[];
   paginationInfo: PaginationInfo;
-  filterInfo: { filters: OppFilters | undefined };
+  filterInfo: { filters: OppFilters };
   sortInfo: { sortBy: string; sortOrder: 'asc' | 'desc' };
 }
 
@@ -83,7 +83,7 @@ export class OpportunityService {
         totalItems: total,
         totalPages: Math.max(1, Math.ceil(total / pagination.pageSize)),
       },
-      filterInfo: { filters: body.filters },
+      filterInfo: { filters: body.filters ?? {} },
       sortInfo: {
         sortBy: body.sorting?.sortBy ?? 'keyDates.closeDate',
         sortOrder: body.sorting?.sortOrder ?? 'asc',
