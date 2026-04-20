@@ -1,4 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { cors } from 'hono/cors';
 import type { AppConfig } from './cg.config';
 import {
   registerAdminRoutes,
@@ -21,6 +22,19 @@ import {
  */
 export function createApp(deps: AppConfig): OpenAPIHono {
   const app = new OpenAPIHono();
+
+  // Public, unauthenticated read API — any origin, any browser. `X-Data-As-Of`
+  // is exposed so clients can read the freshness timestamp the routes set.
+  app.use(
+    '*',
+    cors({
+      origin: '*',
+      allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowHeaders: ['Content-Type', 'Authorization'],
+      exposeHeaders: ['X-Data-As-Of'],
+      maxAge: 86400,
+    }),
+  );
 
   registerHealthRoute(app, deps.service, deps.version);
   registerOpportunityRoutes(app, deps.service);

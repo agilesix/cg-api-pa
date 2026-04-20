@@ -119,9 +119,14 @@ describe('GET /common-grants/opportunities/:id', () => {
     const row = [...(deps.repo as FakeRepo).rows.values()][0]!;
     const res = await createApp(deps).request(`/common-grants/opportunities/${row.id}`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { id: string; title: string };
-    expect(body.id).toBe(row.id);
-    expect(body.title).toBe('4-H Reimbursement');
+    const body = (await res.json()) as {
+      status: number;
+      message: string;
+      data: { id: string; title: string };
+    };
+    expect(body.status).toBe(200);
+    expect(body.data.id).toBe(row.id);
+    expect(body.data.title).toBe('4-H Reimbursement');
   });
 
   it('returns 404 when not found', async () => {
@@ -245,7 +250,7 @@ describe('GET /openapi.json', () => {
     expect(spec.openapi).toMatch(/^3\.1/);
     expect(spec.info.title).toBe('PA CommonGrants API');
     expect(spec.paths['/common-grants/opportunities']).toBeDefined();
-    expect(spec.paths['/common-grants/opportunities/{id}']).toBeDefined();
+    expect(spec.paths['/common-grants/opportunities/{oppId}']).toBeDefined();
     expect(spec.paths['/admin/sync']).toBeDefined();
     expect(spec.paths['/health']).toBeDefined();
   });
