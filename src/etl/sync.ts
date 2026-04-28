@@ -25,8 +25,13 @@ export interface SyncDeps<TSource> {
    * the adapter-agnostic `StoredOpportunity` row that the repository stores.
    * The adapter's `buildStoredOpportunity` composed with `paGrantToOpportunity`
    * is the canonical implementation.
+   *
+   * Returns `null` when the record can't be converted (e.g. the transform's
+   * post-Zod-parse validation rejected it). The runner counts these under
+   * `recordsSkipped` and continues; the adapter is expected to have logged
+   * the reason already.
    */
-  toStored: (source: TSource, contentHash: string) => StoredOpportunity;
+  toStored: (source: TSource, contentHash: string) => StoredOpportunity | null;
 
   /**
    * Optional raw-record archive. The ETL writes the pre-transform JSON to
@@ -47,6 +52,18 @@ export interface SyncDeps<TSource> {
   getSourceId: (source: TSource) => string;
 }
 
+/** Optional knobs for a single `runSync` invocation. */
+export interface SyncOptions {
+  /**
+   * When true, skip the contentHash short-circuit so every upstream record
+   * is re-transformed and re-upserted even if its content hasn't changed.
+   * Use this to repair bad rows after a transform-layer fix lands — the
+   * cron / lazy-resync paths leave this `false` so steady-state syncs stay
+   * cheap.
+   */
+  force?: boolean;
+}
+
 /**
  * Runs a full sync pass:
  *
@@ -55,7 +72,7 @@ export interface SyncDeps<TSource> {
  *   3. For each record:
  *      - Hash the raw record.
  *      - Look up the existing row by source id.
- *      - If the hash is unchanged, skip.
+ *      - If the hash is unchanged (and `force` is not set), skip.
  *      - Otherwise, transform via `toStored`, upsert, and write a snapshot.
  *   4. Log completion with stats.
  *
@@ -63,7 +80,11 @@ export interface SyncDeps<TSource> {
  * the caller (cron / admin endpoint) can decide how to surface them. The
  * function never double-commits stats even if a later step throws.
  */
-export async function runSync<TSource>(deps: SyncDeps<TSource>): Promise<SyncStats> {
+export async function runSync<TSource>(
+  deps: SyncDeps<TSource>,
+  options: SyncOptions = {},
+): Promise<SyncStats> {
+  const force = options.force ?? false;
   const logger = deps.logger ?? console;
   const startedAt = new Date().toISOString();
   const runId = await deps.repo.logSyncStart();
@@ -81,12 +102,16 @@ export async function runSync<TSource>(deps: SyncDeps<TSource>): Promise<SyncSta
       const contentHash = await computeHash(source);
       const existing = await deps.repo.findBySourceId(sourceId);
 
-      if (existing && existing.contentHash === contentHash) {
+      if (!force && existing && existing.contentHash === contentHash) {
         recordsSkipped += 1;
         continue;
       }
 
       const row = deps.toStored(source, contentHash);
+      if (row === null) {
+        recordsSkipped += 1;
+        continue;
+      }
       await deps.repo.upsert(row);
       await deps.snapshots.put(`${sourceId}/${startedAt}.json`, JSON.stringify(source));
 
@@ -94,7 +119,7 @@ export async function runSync<TSource>(deps: SyncDeps<TSource>): Promise<SyncSta
       else recordsInserted += 1;
     }
     logger.info(
-      `[sync] complete: fetched=${recordsFetched} inserted=${recordsInserted} updated=${recordsUpdated} skipped=${recordsSkipped}`,
+      `[sync] complete${force ? ' (forced)' : ''}: fetched=${recordsFetched} inserted=${recordsInserted} updated=${recordsUpdated} skipped=${recordsSkipped}`,
     );
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);

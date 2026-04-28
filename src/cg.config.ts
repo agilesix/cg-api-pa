@@ -1,12 +1,13 @@
 import { D1Dialect } from './storage/sql/d1-dialect';
 import {
   PaSourceClient,
+  TransformValidationError,
   buildStoredOpportunity,
   paGrantToOpportunity,
   type PaGrant,
 } from './adapter';
 import type { IOppRepo, ISnapshotStore, Logger, SyncStats } from './core';
-import { runSync } from './etl';
+import { runSync, type SyncOptions } from './etl';
 import { BucketSnapshotStore } from './snapshots';
 import { OpportunityService } from './services';
 import { SqliteOppRepo, createDb } from './storage/sql';
@@ -29,7 +30,7 @@ export interface AppConfig {
    * to sync and pass `undefined`, which causes the admin route to be
    * omitted entirely.
    */
-  sync?: () => Promise<SyncStats>;
+  sync?: (options?: SyncOptions) => Promise<SyncStats>;
   /** Bearer token required by `POST /common-grants/admin/sync`. */
   syncSecret: string;
   logger: Logger;
@@ -72,18 +73,31 @@ export function buildConfig(env: Cloudflare.Env, logger: Logger = console): AppC
 
   const client = new PaSourceClient(env.PA_API_BASE_URL);
 
-  const sync = (): Promise<SyncStats> =>
-    runSync({
-      client,
-      repo,
-      snapshots,
-      logger,
-      getSourceId: (g: PaGrant) => g.slug,
-      toStored: (g, contentHash) => {
-        const opp = paGrantToOpportunity(g, new Date().toISOString());
-        return buildStoredOpportunity(g, opp, contentHash);
+  const sync = (options?: SyncOptions): Promise<SyncStats> =>
+    runSync(
+      {
+        client,
+        repo,
+        snapshots,
+        logger,
+        getSourceId: (g: PaGrant) => g.slug,
+        toStored: (g, contentHash) => {
+          try {
+            const opp = paGrantToOpportunity(g, new Date().toISOString());
+            return buildStoredOpportunity(g, opp, contentHash);
+          } catch (err) {
+            if (err instanceof TransformValidationError) {
+              logger.warn(
+                `[sync] skipping invalid record sourceId=${err.sourceId}: ${err.message}`,
+              );
+              return null;
+            }
+            throw err;
+          }
+        },
       },
-    });
+      options,
+    );
 
   return {
     repo,

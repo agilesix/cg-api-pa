@@ -38,7 +38,7 @@ const noopRepo: IOppRepo = {
 };
 
 const noopSnapshots: ISnapshotStore = { put: async () => {} };
-const noopLogger: Logger = { info: () => {}, error: () => {} };
+const noopLogger: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 const noopSync = async (): Promise<SyncStats> => ({
   startedAt: '',
   completedAt: '',

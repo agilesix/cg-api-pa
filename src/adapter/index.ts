@@ -59,7 +59,9 @@ export {
   moneyToCents,
   stripHtml,
   nullIfEmpty,
+  nullIfNotUrl,
   splitIsoDateTime,
+  TransformValidationError,
   type PaOpportunityInput,
 } from './transform';
 

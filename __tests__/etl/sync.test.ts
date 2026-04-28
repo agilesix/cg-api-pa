@@ -107,7 +107,7 @@ function buildDeps(sources: FakeSource[]): {
     snapshots,
     toStored,
     getSourceId: (s) => s.slug,
-    logger: { info: () => {}, error: () => {} },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
   };
   return { deps, repo, snapshots };
 }
@@ -152,6 +152,19 @@ describe('runSync', () => {
     // Snapshots written on first run (3) stay; no new writes on second run.
     expect(repo.rows.size).toBe(3);
     expect(snapshots.writes).toHaveLength(3);
+  });
+
+  it('force=true re-upserts unchanged records (counted as updates, fresh snapshots)', async () => {
+    const { deps, repo, snapshots } = buildDeps(sources);
+    await runSync(deps);
+    const stats = await runSync(deps, { force: true });
+
+    expect(stats.recordsFetched).toBe(3);
+    expect(stats.recordsInserted).toBe(0);
+    expect(stats.recordsUpdated).toBe(3);
+    expect(stats.recordsSkipped).toBe(0);
+    expect(repo.rows.size).toBe(3);
+    expect(snapshots.writes).toHaveLength(6);
   });
 
   it('marks changed records as updated and writes fresh snapshots', async () => {
@@ -203,7 +216,7 @@ describe('runSync', () => {
       snapshots,
       toStored,
       getSourceId: (s) => s.slug,
-      logger: { info: () => {}, error: () => {} },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
     };
 
     await expect(runSync(deps)).rejects.toThrow('upstream fetch failed');
