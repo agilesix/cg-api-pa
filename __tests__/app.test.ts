@@ -66,7 +66,7 @@ function buildDeps(overrides: Partial<AppConfig> = {}): AppConfig {
     service: new OpportunityService(repo),
     sync: overrides.sync,
     syncSecret: overrides.syncSecret ?? 'test-secret',
-    logger: { info: () => {}, error: () => {} },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
     version: '0.1.0-test',
     ...overrides,
   };
@@ -234,6 +234,38 @@ describe('POST /admin/sync', () => {
       headers: { authorization: 'Bearer test-secret' },
     });
     expect(res.status).toBe(404);
+  });
+
+  it('forwards ?force=true to the bound sync function', async () => {
+    let captured: { force?: boolean } | undefined;
+    const deps = buildDeps({
+      sync: async (opts) => {
+        captured = opts;
+        return fakeStats();
+      },
+    });
+    const res = await createApp(deps).request('/admin/sync?force=true', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-secret' },
+    });
+    expect(res.status).toBe(200);
+    expect(captured).toEqual({ force: true });
+  });
+
+  it('defaults to force=false when no query param is present', async () => {
+    let captured: { force?: boolean } | undefined;
+    const deps = buildDeps({
+      sync: async (opts) => {
+        captured = opts;
+        return fakeStats();
+      },
+    });
+    const res = await createApp(deps).request('/admin/sync', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-secret' },
+    });
+    expect(res.status).toBe(200);
+    expect(captured).toEqual({ force: false });
   });
 });
 

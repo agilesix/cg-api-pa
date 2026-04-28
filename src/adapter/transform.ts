@@ -1,7 +1,7 @@
 import { v5 as uuidv5 } from 'uuid';
-import type { z } from 'zod';
+import type { z, ZodIssue } from 'zod';
 import type { PaGrant } from './paSource';
-import type { PaOpportunitySchema } from './plugin';
+import { PaOpportunitySchema } from './plugin';
 import type { StoredOpportunity } from '../core';
 
 /**
@@ -22,6 +22,32 @@ type OtherDateInput = NonNullable<
 
 /** Element type of `PaOpportunityInput.customFields`. */
 type CustomFieldInput = NonNullable<PaOpportunityInput['customFields']>[string];
+
+// =============================================================================
+// Errors
+// =============================================================================
+
+/**
+ * Thrown by `paGrantToOpportunity` when the post-transform object fails
+ * `PaOpportunitySchema.safeParse(...)`. Carries the offending Zod issues so
+ * callers (the ETL `toStored` wrapper, tests) can log structured details
+ * before deciding whether to skip the record or rethrow.
+ */
+export class TransformValidationError extends Error {
+  readonly issues: ZodIssue[];
+  readonly sourceId: string;
+
+  constructor(sourceId: string, issues: ZodIssue[]) {
+    super(
+      `paGrantToOpportunity produced invalid output for "${sourceId}": ${issues
+        .map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`)
+        .join('; ')}`,
+    );
+    this.name = 'TransformValidationError';
+    this.sourceId = sourceId;
+    this.issues = issues;
+  }
+}
 
 // =============================================================================
 // UUID v5 namespace
@@ -49,6 +75,23 @@ export function nullIfEmpty(s: string | null | undefined): string | null {
   if (s == null) return null;
   const trimmed = s.trim();
   return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * Like `nullIfEmpty`, but additionally returns null when the value isn't a
+ * parseable absolute URL. Use for fields that the CommonGrants schema
+ * validates with `.url()` (e.g. `Opportunity.source`) so that free-form PA
+ * values like `"TBD"` or `"Contact agency"` don't slip through and break
+ * downstream Zod parsing.
+ */
+export function nullIfNotUrl(s: string | null): string | null {
+  if (!s) return null;
+  try {
+    new URL(s);
+    return s;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -254,10 +297,11 @@ export function parseContact(raw: { name?: string | null } | null | undefined): 
  * Convert a raw PA grant record into a CommonGrants `Opportunity` with PA
  * custom fields attached. Pure function — no I/O, no DB, no Workers types.
  *
- * Returns the **input** shape (strings everywhere, no `Date` objects). The
- * ETL and service layers run this through `PaOpportunitySchema.parse()` when
- * they want the typed, transformed version; simple consumers can use it
- * directly as JSON.
+ * Returns the **input** shape (strings everywhere, no `Date` objects) so
+ * callers can serialize directly to JSON. Before returning, the result is
+ * validated with `PaOpportunitySchema.safeParse(...)`; on failure a
+ * `TransformValidationError` is thrown so the ETL skips the record instead
+ * of persisting data that would 502 the consumer at read time.
  *
  * The `syncedAt` argument is the ISO timestamp of the current ETL run; it
  * is stored in the `paLastSyncedAt` custom field and used as the `createdAt`
@@ -461,8 +505,20 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
     value: syncedAt,
   };
 
-  // Source URL: PA's linkToApply is a valid URL; empty → null.
-  const source = nullIfEmpty(pa.linkToApply);
+  // Source URL: PA's `linkToApply` is *usually* an absolute URL, but the
+  // feed sometimes carries free-form values like "TBD" or "Contact agency"
+  // that fail the SDK's `.url()` validation. Coerce non-URLs to null and
+  // stash the raw value in `paRawLinkToApply` so it isn't silently lost
+  // (mirrors the `paRawMinAward` / `paRawMaxAward` pattern above).
+  const cleanedLink = nullIfEmpty(pa.linkToApply);
+  const source = nullIfNotUrl(cleanedLink);
+  if (cleanedLink !== null && source === null) {
+    customFields['paRawLinkToApply'] = {
+      name: 'paRawLinkToApply',
+      fieldType: 'string',
+      value: cleanedLink,
+    };
+  }
 
   // PA's `last_modified` is already ISO 8601 UTC (`"2026-04-07T20:00:21Z"`).
   const lastModifiedAt = pa.last_modified;
@@ -514,6 +570,10 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
     lastModifiedAt,
   };
 
+  const parsed = PaOpportunitySchema.safeParse(opp);
+  if (!parsed.success) {
+    throw new TransformValidationError(pa.slug, parsed.error.issues);
+  }
   return opp;
 }
 

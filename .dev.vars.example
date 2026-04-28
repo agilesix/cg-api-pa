@@ -1,0 +1,48 @@
+# Local secrets for `wrangler dev`. Copy this file to `.dev.vars` (which is
+# gitignored) and fill in the values; Wrangler reads `.dev.vars` automatically
+# and exposes each key on the Workers `env` object.
+#
+# Only put RUNTIME SECRETS here. Non-secret config and resource bindings live
+# elsewhere — see the inventory below so you know which file to edit when a
+# value isn't behaving the way you expect.
+
+# =============================================================================
+# Runtime secrets — belong in `.dev.vars`
+# =============================================================================
+
+# Bearer token required by `POST /common-grants/admin/sync`.
+# Pick anything for local dev. In production, set with:
+#   wrangler secret put SYNC_SECRET
+# (the cd-production workflow already does this from the GitHub secret).
+#
+# Example admin call once `wrangler dev` is up:
+#   curl -X POST 'http://localhost:8787/common-grants/admin/sync' \
+#     -H "Authorization: Bearer $SYNC_SECRET"
+#
+# Add `?force=true` to bypass the contentHash short-circuit and re-transform
+# every record (use after a transform-layer fix to repair rows already in D1):
+#   curl -X POST 'http://localhost:8787/common-grants/admin/sync?force=true' \
+#     -H "Authorization: Bearer $SYNC_SECRET"
+SYNC_SECRET=local-dev-secret
+
+# =============================================================================
+# Other env values — DO NOT add these to `.dev.vars`. Listed for reference so
+# you know where each one lives if you need to change it.
+# =============================================================================
+#
+# Configured in `wrangler.jsonc` (`vars` block) — non-secret, checked in:
+#   PA_API_BASE_URL  Upstream PA eGrants Beta API base URL.
+#   ENVIRONMENT      "preview" | "production". Set per env block in wrangler.jsonc.
+#
+# Configured in `wrangler.jsonc` (resource bindings) — provisioned by Wrangler,
+# auto-injected into `env` at runtime; no value needed here:
+#   DB         D1 database binding (database_id pinned per env).
+#   SNAPSHOTS  R2 bucket binding for raw upstream snapshots.
+#
+# GitHub Actions secrets (NOT for local dev) — configured under
+# Settings → Secrets and variables → Actions in this repo. Used by
+# `.github/workflows/cd-preview.yml` and `cd-production.yml`:
+#   CLOUDFLARE_API_TOKEN   Token with Workers + D1 + R2 edit scopes.
+#   CLOUDFLARE_ACCOUNT_ID  Account that owns the Worker / D1 / R2 resources.
+#   SYNC_SECRET            Same key as above; cd-production pipes it to
+#                          `wrangler secret put SYNC_SECRET` on deploy.

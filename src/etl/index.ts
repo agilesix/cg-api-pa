@@ -6,5 +6,5 @@
  * `POST /common-grants/admin/sync`.
  */
 
-export { runSync, type SyncDeps } from './sync';
+export { runSync, type SyncDeps, type SyncOptions } from './sync';
 export { computeHash, canonicalJson } from './hash';

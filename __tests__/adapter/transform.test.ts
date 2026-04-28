@@ -5,6 +5,7 @@ import {
   moneyToCents,
   normalizeStatus,
   nullIfEmpty,
+  nullIfNotUrl,
   PaOpportunitySchema,
   paGrantToOpportunity,
   parseContact,
@@ -12,6 +13,7 @@ import {
   slugToCgId,
   splitIsoDateTime,
   stripHtml,
+  TransformValidationError,
 } from '../../src/adapter';
 import { pdA1Fixture, pdA2FixtureEdgeCases } from './fixtures';
 
@@ -26,6 +28,21 @@ describe('nullIfEmpty', () => {
   it('trims surrounding whitespace on real values', () => {
     expect(nullIfEmpty('  hello  ')).toBe('hello');
     expect(nullIfEmpty('Annual ')).toBe('Annual');
+  });
+});
+
+describe('nullIfNotUrl', () => {
+  it('returns null for null, empty, or non-URL strings', () => {
+    expect(nullIfNotUrl(null)).toBeNull();
+    expect(nullIfNotUrl('')).toBeNull();
+    expect(nullIfNotUrl('TBD')).toBeNull();
+    expect(nullIfNotUrl('Contact agency')).toBeNull();
+    expect(nullIfNotUrl('/relative/path')).toBeNull();
+  });
+
+  it('returns the string unchanged for parseable absolute URLs', () => {
+    expect(nullIfNotUrl('https://example.gov/x')).toBe('https://example.gov/x');
+    expect(nullIfNotUrl('http://pa.gov')).toBe('http://pa.gov');
   });
 });
 
@@ -350,6 +367,72 @@ describe('paGrantToOpportunity (edge cases)', () => {
 
   it('still produces output that passes schema validation', () => {
     expect(() => PaOpportunitySchema.parse(opp)).not.toThrow();
+  });
+});
+
+describe('paGrantToOpportunity (linkToApply coercion)', () => {
+  it('drops non-URL linkToApply values from `source` and stashes them in paRawLinkToApply', () => {
+    const opp = paGrantToOpportunity(
+      { ...pdA1Fixture, slug: 'pda-bad-link', linkToApply: 'TBD' },
+      '2026-04-27T00:00:00Z',
+    );
+    expect(opp.source).toBeNull();
+    expect(opp.customFields?.['paRawLinkToApply']).toMatchObject({
+      fieldType: 'string',
+      value: 'TBD',
+    });
+  });
+
+  it('keeps valid URL linkToApply values and does not stash a raw copy', () => {
+    const opp = paGrantToOpportunity(
+      { ...pdA1Fixture, linkToApply: 'https://example.gov/x' },
+      '2026-04-27T00:00:00Z',
+    );
+    expect(opp.source).toBe('https://example.gov/x');
+    expect(opp.customFields?.['paRawLinkToApply']).toBeUndefined();
+  });
+
+  it('leaves both `source` and paRawLinkToApply unset when linkToApply is empty', () => {
+    const opp = paGrantToOpportunity(
+      { ...pdA1Fixture, slug: 'pda-empty-link', linkToApply: '' },
+      '2026-04-27T00:00:00Z',
+    );
+    expect(opp.source).toBeNull();
+    expect(opp.customFields?.['paRawLinkToApply']).toBeUndefined();
+  });
+});
+
+describe('paGrantToOpportunity (post-transform validation)', () => {
+  it('throws TransformValidationError when the produced object fails schema validation', () => {
+    // `last_modified` is passed straight through into `lastModifiedAt`, which
+    // the SDK validates as a UTC datetime — a garbage value reliably trips
+    // the post-transform safe-parse without us having to fake the schema.
+    const bad: typeof pdA1Fixture = {
+      ...pdA1Fixture,
+      slug: 'pda-bad-modified',
+      last_modified: 'not-a-datetime',
+    };
+    expect(() => paGrantToOpportunity(bad, '2026-04-27T00:00:00Z')).toThrow(
+      TransformValidationError,
+    );
+  });
+
+  it('attaches the source slug and the offending Zod issues on the thrown error', () => {
+    const bad: typeof pdA1Fixture = {
+      ...pdA1Fixture,
+      slug: 'pda-bad-modified-2',
+      last_modified: 'not-a-datetime',
+    };
+    try {
+      paGrantToOpportunity(bad, '2026-04-27T00:00:00Z');
+      throw new Error('expected paGrantToOpportunity to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransformValidationError);
+      const tve = err as TransformValidationError;
+      expect(tve.sourceId).toBe('pda-bad-modified-2');
+      expect(tve.issues.length).toBeGreaterThan(0);
+      expect(tve.issues.some((i) => i.path.includes('lastModifiedAt'))).toBe(true);
+    }
   });
 });
 
