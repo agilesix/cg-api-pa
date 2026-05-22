@@ -8,4 +8,8 @@ export class NoopSnapshotStore implements ISnapshotStore {
   async put(_key: string, _value: string): Promise<void> {
     // Intentionally empty.
   }
+
+  async putMany(_entries: Array<{ key: string; body: string }>): Promise<void> {
+    // Intentionally empty.
+  }
 }
