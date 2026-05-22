@@ -1,4 +1,4 @@
-import { sql, type Selectable } from 'kysely';
+import { sql, type Insertable, type Selectable } from 'kysely';
 import type {
   IOppRepo,
   OpportunitySearchParams,
@@ -11,6 +11,25 @@ import type { OpportunitiesTable } from './schema';
 
 /** The shape of a SELECTed opportunities row (generated columns resolved to string). */
 type OpportunitiesRow = Selectable<OpportunitiesTable>;
+
+// Columns updated on `ON CONFLICT` for batch upserts. Listed once so a column
+// rename in `OpportunitiesTable` is a single-line change here; `satisfies`
+// catches any typo against the table schema at compile time.
+const UPSERT_UPDATE_COLS = [
+  'source_id',
+  'title',
+  'status',
+  'close_date',
+  'post_date',
+  'min_award_amount_cents',
+  'max_award_amount_cents',
+  'total_amount_available_cents',
+  'search_text',
+  'content_hash',
+  'last_modified_at',
+  'raw_json',
+  'updated_at',
+] as const satisfies ReadonlyArray<keyof OpportunitiesTable>;
 
 // Maps CG `sortBy` values → SQL column names on the `opportunities` table.
 const SORT_COLUMN_MAP: Record<string, string> = {
@@ -185,44 +204,40 @@ export class SqliteOppRepo implements IOppRepo {
   }
 
   async upsert(record: StoredOpportunity): Promise<void> {
+    await this.upsertBatch([record]);
+  }
+
+  async upsertBatch(records: StoredOpportunity[]): Promise<void> {
+    if (records.length === 0) return;
     const now = new Date().toISOString();
-    await this.db
-      .insertInto('opportunities')
-      .values({
-        id: record.id,
-        source_id: record.sourceId,
-        title: record.title,
-        status: record.status,
-        close_date: record.closeDate,
-        post_date: record.postDate,
-        min_award_amount_cents: record.minAwardAmountCents,
-        max_award_amount_cents: record.maxAwardAmountCents,
-        total_amount_available_cents: record.totalAmountAvailableCents,
-        search_text: record.searchText,
-        content_hash: record.contentHash,
-        last_modified_at: record.lastModifiedAt,
-        raw_json: record.rawJson,
-        created_at: now,
-        updated_at: now,
-      })
-      .onConflict((oc) =>
-        oc.column('id').doUpdateSet({
-          source_id: record.sourceId,
-          title: record.title,
-          status: record.status,
-          close_date: record.closeDate,
-          post_date: record.postDate,
-          min_award_amount_cents: record.minAwardAmountCents,
-          max_award_amount_cents: record.maxAwardAmountCents,
-          total_amount_available_cents: record.totalAmountAvailableCents,
-          search_text: record.searchText,
-          content_hash: record.contentHash,
-          last_modified_at: record.lastModifiedAt,
-          raw_json: record.rawJson,
-          updated_at: now,
-        }),
-      )
+    // D1 caps bound parameters at 100 per statement. Each row binds 15
+    // columns, so 6 rows × 15 = 90 leaves headroom. A larger batch on a
+    // less-restricted SQLite would compile fine but fail under D1.
+    const BATCH = 6;
+    for (let i = 0; i < records.length; i += BATCH) {
+      const chunk = records.slice(i, i + BATCH);
+      await this.db
+        .insertInto('opportunities')
+        .values(chunk.map((record) => toInsertValues(record, now)))
+        .onConflict((oc) =>
+          // Build `col = excluded.col` for each column in SQLite's UPSERT pseudo-table
+          // which holds the conflicting row's incoming insert values.
+          oc
+            .column('id')
+            .doUpdateSet((eb) =>
+              Object.fromEntries(UPSERT_UPDATE_COLS.map((c) => [c, eb.ref(`excluded.${c}`)])),
+            ),
+        )
+        .execute();
+    }
+  }
+
+  async allHashesBySourceId(): Promise<Map<string, string>> {
+    const rows = await this.db
+      .selectFrom('opportunities')
+      .select(['source_id', 'content_hash'])
       .execute();
+    return new Map(rows.map((r) => [r.source_id, r.content_hash]));
   }
 
   async getLastSyncedAt(): Promise<string | null> {
@@ -274,6 +289,26 @@ function sanitizeFtsQuery(query: string): string | null {
   const sanitized = query.trim().replace(/["']/g, ' ').trim();
   if (sanitized === '') return null;
   return `"${sanitized}"*`;
+}
+
+function toInsertValues(record: StoredOpportunity, now: string): Insertable<OpportunitiesTable> {
+  return {
+    id: record.id,
+    source_id: record.sourceId,
+    title: record.title,
+    status: record.status,
+    close_date: record.closeDate,
+    post_date: record.postDate,
+    min_award_amount_cents: record.minAwardAmountCents,
+    max_award_amount_cents: record.maxAwardAmountCents,
+    total_amount_available_cents: record.totalAmountAvailableCents,
+    search_text: record.searchText,
+    content_hash: record.contentHash,
+    last_modified_at: record.lastModifiedAt,
+    raw_json: record.rawJson,
+    created_at: now,
+    updated_at: now,
+  };
 }
 
 function rowToStored(row: OpportunitiesRow): StoredOpportunity {

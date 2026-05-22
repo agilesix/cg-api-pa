@@ -87,6 +87,16 @@ export class ProxyOppRepo<TSource> implements IOppRepo {
     // No-op: proxy tier has no persistence.
   }
 
+  async upsertBatch(_records: StoredOpportunity[]): Promise<void> {
+    // No-op: proxy tier has no persistence.
+  }
+
+  async allHashesBySourceId(): Promise<Map<string, string>> {
+    // Proxy tier has no persisted rows — every ETL pass treats every record
+    // as new, which is fine: the ETL never targets a proxy-tier deployment.
+    return new Map();
+  }
+
   async getLastSyncedAt(): Promise<string | null> {
     return this.cachedAt === 0 ? null : new Date(this.cachedAt).toISOString();
   }

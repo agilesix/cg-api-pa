@@ -45,6 +45,12 @@ class FakeRepo implements IOppRepo {
   async upsert(record: StoredOpportunity) {
     this.rows.set(record.id, record);
   }
+  async upsertBatch(records: StoredOpportunity[]) {
+    for (const record of records) this.rows.set(record.id, record);
+  }
+  async allHashesBySourceId() {
+    return new Map([...this.rows.values()].map((r) => [r.sourceId, r.contentHash]));
+  }
   async getLastSyncedAt() {
     return this.lastSync;
   }
@@ -62,7 +68,7 @@ function buildDeps(overrides: Partial<AppConfig> = {}): AppConfig {
   const repo = overrides.repo ?? new FakeRepo([row]);
   return {
     repo,
-    snapshots: { put: async () => {} },
+    snapshots: { put: async () => {}, putMany: async () => {} },
     service: new OpportunityService(repo),
     sync: overrides.sync,
     syncSecret: overrides.syncSecret ?? 'test-secret',

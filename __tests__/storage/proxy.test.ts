@@ -250,8 +250,9 @@ describe('ProxyOppRepo', () => {
     expect(result.items[0]?.title).toBe('Research Grant');
   });
 
-  it('upsert / logSyncStart / logSyncComplete are no-ops', async () => {
+  it('upsert / upsertBatch / logSyncStart / logSyncComplete are no-ops', async () => {
     await expect(repo.upsert(transform(records[0]!))).resolves.toBeUndefined();
+    await expect(repo.upsertBatch(records.map(transform))).resolves.toBeUndefined();
     await expect(repo.logSyncStart()).resolves.toBe(0);
     await expect(
       repo.logSyncComplete(0, {
@@ -264,6 +265,11 @@ describe('ProxyOppRepo', () => {
         errorMessage: null,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('allHashesBySourceId returns an empty map (no persistence)', async () => {
+    const map = await repo.allHashesBySourceId();
+    expect(map.size).toBe(0);
   });
 
   it('getLastSyncedAt returns null before first fetch and an ISO string after', async () => {
