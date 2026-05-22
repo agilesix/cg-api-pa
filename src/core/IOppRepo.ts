@@ -41,6 +41,22 @@ export interface IOppRepo {
   upsert(record: StoredOpportunity): Promise<void>;
 
   /**
+   * Batch insert-or-replace. The ETL uses this to collapse N D1 round trips
+   * into ⌈N / batchSize⌉ on a forced resync. Implementations may chunk
+   * internally; callers should treat each chunk as atomic but not the whole
+   * call. No-op for the proxy tier.
+   */
+  upsertBatch(records: StoredOpportunity[]): Promise<void>;
+
+  /**
+   * Bulk read for the ETL's content-hash short-circuit. Returns a map of
+   * `sourceId → contentHash` covering every persisted row. Replaces N
+   * per-record `findBySourceId` lookups with a single SELECT. Implementations
+   * with no persistence (proxy) return an empty map.
+   */
+  allHashesBySourceId(): Promise<Map<string, string>>;
+
+  /**
    * ISO datetime of the most recent successful sync, or `null` if none has
    * run yet. Drives the `X-Data-As-Of` response header.
    */

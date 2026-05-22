@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { D1Dialect, SqliteOppRepo, createDb } from '../../../src/storage/sql';
 import type { OpportunitySearchParams, StoredOpportunity } from '../../../src/core';
@@ -187,6 +187,90 @@ describe('SqliteOppRepo', () => {
       const result = await repo.search(sp({ query: 'nonexistent' }));
       expect(result.total).toBe(0);
       expect(result.items).toHaveLength(0);
+    });
+  });
+
+  describe('upsertBatch', () => {
+    it('is a no-op for an empty array', async () => {
+      const repo = buildRepo();
+      await expect(repo.upsertBatch([])).resolves.toBeUndefined();
+      const result = await repo.search(sp());
+      expect(result.total).toBe(0);
+    });
+
+    it('inserts all rows in a single call', async () => {
+      const repo = buildRepo();
+      const batch = Array.from({ length: 10 }, (_, i) =>
+        fakeRow({
+          id: `00000000-0000-5000-8000-${String(i).padStart(12, '0')}`,
+          sourceId: `s${i}`,
+          title: `Title ${i}`,
+          contentHash: `hash-${i}`,
+        }),
+      );
+      await repo.upsertBatch(batch);
+      const result = await repo.search(sp({ pagination: { page: 1, pageSize: 100 } }));
+      expect(result.total).toBe(10);
+      expect(result.items.map((r) => r.sourceId).sort()).toEqual(
+        batch.map((r) => r.sourceId).sort(),
+      );
+    });
+
+    it('updates rows on conflicting id (same row set, fresh hash)', async () => {
+      const repo = buildRepo();
+      const initial = fakeRow({ title: 'v1', contentHash: 'hash-a' });
+      await repo.upsertBatch([initial]);
+      await repo.upsertBatch([{ ...initial, title: 'v2', contentHash: 'hash-b' }]);
+      const read = await repo.findById(initial.id);
+      expect(read?.title).toBe('v2');
+      expect(read?.contentHash).toBe('hash-b');
+    });
+
+    it('crosses the internal chunk boundary cleanly', async () => {
+      // Forces multiple chunks at the D1-safe batch size (~6/chunk), with a
+      // tail chunk that isn't a clean multiple — exercises both the loop and
+      // the final partial slice.
+      const repo = buildRepo();
+      const N = 20;
+      const batch = Array.from({ length: N }, (_, i) =>
+        fakeRow({
+          id: `00000000-0000-5000-8000-${String(i).padStart(12, '0')}`,
+          sourceId: `s${i}`,
+          title: `Title ${i}`,
+          contentHash: `hash-${i}`,
+        }),
+      );
+      await repo.upsertBatch(batch);
+      const result = await repo.search(sp({ pagination: { page: 1, pageSize: 100 } }));
+      expect(result.total).toBe(N);
+    });
+  });
+
+  describe('allHashesBySourceId', () => {
+    it('returns an empty map when no rows are persisted', async () => {
+      const repo = buildRepo();
+      const map = await repo.allHashesBySourceId();
+      expect(map.size).toBe(0);
+    });
+
+    it('returns sourceId → contentHash for every persisted row', async () => {
+      const repo = buildRepo();
+      await repo.upsertBatch([
+        fakeRow({
+          id: '00000000-0000-5000-8000-000000000001',
+          sourceId: 'a',
+          contentHash: 'h-a',
+        }),
+        fakeRow({
+          id: '00000000-0000-5000-8000-000000000002',
+          sourceId: 'b',
+          contentHash: 'h-b',
+        }),
+      ]);
+      const map = await repo.allHashesBySourceId();
+      expect(map.size).toBe(2);
+      expect(map.get('a')).toBe('h-a');
+      expect(map.get('b')).toBe('h-b');
     });
   });
 

@@ -28,6 +28,8 @@ describe('core contracts', () => {
       findBySourceId: async () => null,
       search: async (_params: OpportunitySearchParams) => ({ items: [], total: 0 }),
       upsert: async (_record: StoredOpportunity) => {},
+      upsertBatch: async (_records: StoredOpportunity[]) => {},
+      allHashesBySourceId: async () => new Map<string, string>(),
       getLastSyncedAt: async () => null,
       logSyncStart: async () => 0,
       logSyncComplete: async (_id: number, _stats: SyncStats) => {},
@@ -54,6 +56,7 @@ describe('core contracts', () => {
   it('ISnapshotStore is fully implementable by a fake', () => {
     const fake: ISnapshotStore = {
       put: async (_key: string, _value: string) => {},
+      putMany: async (_entries: Array<{ key: string; body: string }>) => {},
     };
     expect(typeof fake.put).toBe('function');
   });

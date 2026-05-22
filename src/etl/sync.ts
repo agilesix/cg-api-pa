@@ -68,13 +68,14 @@ export interface SyncOptions {
  * Runs a full sync pass:
  *
  *   1. Log the start of a run in the repository's sync_log.
- *   2. Iterate every record from the source via `client.listAll()`.
- *   3. For each record:
- *      - Hash the raw record.
- *      - Look up the existing row by source id.
- *      - If the hash is unchanged (and `force` is not set), skip.
- *      - Otherwise, transform via `toStored`, upsert, and write a snapshot.
- *   4. Log completion with stats.
+ *   2. Pre-fetch every persisted `sourceId → contentHash` in one query so
+ *      the change-detection short-circuit is a Map lookup, not a SELECT.
+ *   3. Iterate every record from the source via `client.listAll()` and
+ *      partition into `toUpsert` / `toSnapshot` arrays. Stats accounting
+ *      happens in the loop; the writes happen after.
+ *   4. Batch-write the partitioned rows: D1 upserts in chunks, R2 snapshots
+ *      in bounded-parallel PUTs. Both stages run concurrently.
+ *   5. Log completion with stats.
  *
  * Errors are caught, logged, recorded in the sync_log row, and re-thrown so
  * the caller (cron / admin endpoint) can decide how to surface them. The
@@ -96,13 +97,17 @@ export async function runSync<TSource>(
   let errorMessage: string | null = null;
 
   try {
+    const existingHashes = await deps.repo.allHashesBySourceId();
+    const toUpsert: StoredOpportunity[] = [];
+    const toSnapshot: Array<{ key: string; body: string }> = [];
+
     for await (const source of deps.client.listAll()) {
       recordsFetched += 1;
       const sourceId = deps.getSourceId(source);
       const contentHash = await computeHash(source);
-      const existing = await deps.repo.findBySourceId(sourceId);
+      const priorHash = existingHashes.get(sourceId);
 
-      if (!force && existing && existing.contentHash === contentHash) {
+      if (!force && priorHash !== undefined && priorHash === contentHash) {
         recordsSkipped += 1;
         continue;
       }
@@ -112,12 +117,19 @@ export async function runSync<TSource>(
         recordsSkipped += 1;
         continue;
       }
-      await deps.repo.upsert(row);
-      await deps.snapshots.put(`${sourceId}/${startedAt}.json`, JSON.stringify(source));
 
-      if (existing) recordsUpdated += 1;
+      toUpsert.push(row);
+      toSnapshot.push({
+        key: `${sourceId}/${startedAt}.json`,
+        body: JSON.stringify(source),
+      });
+
+      if (priorHash !== undefined) recordsUpdated += 1;
       else recordsInserted += 1;
     }
+
+    await Promise.all([deps.repo.upsertBatch(toUpsert), deps.snapshots.putMany(toSnapshot)]);
+
     logger.info(
       `[sync] complete${force ? ' (forced)' : ''}: fetched=${recordsFetched} inserted=${recordsInserted} updated=${recordsUpdated} skipped=${recordsSkipped}`,
     );

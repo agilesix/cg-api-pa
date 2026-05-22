@@ -32,12 +32,14 @@ const noopRepo: IOppRepo = {
     total: 0,
   }),
   upsert: async () => {},
+  upsertBatch: async () => {},
+  allHashesBySourceId: async () => new Map<string, string>(),
   getLastSyncedAt: async () => null,
   logSyncStart: async () => 0,
   logSyncComplete: async () => {},
 };
 
-const noopSnapshots: ISnapshotStore = { put: async () => {} };
+const noopSnapshots: ISnapshotStore = { put: async () => {}, putMany: async () => {} };
 const noopLogger: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 const noopSync = async (): Promise<SyncStats> => ({
   startedAt: '',

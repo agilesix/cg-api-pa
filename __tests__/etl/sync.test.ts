@@ -23,6 +23,7 @@ import type {
 class FakeRepo implements IOppRepo {
   readonly rows = new Map<string, StoredOpportunity>();
   readonly syncLogs: { startedAt: string; stats: SyncStats | null }[] = [];
+  readonly upsertBatchCalls: number[] = [];
 
   async findById(id: string) {
     for (const row of this.rows.values()) if (row.id === id) return row;
@@ -36,6 +37,13 @@ class FakeRepo implements IOppRepo {
   }
   async upsert(record: StoredOpportunity) {
     this.rows.set(record.sourceId, record);
+  }
+  async upsertBatch(records: StoredOpportunity[]) {
+    this.upsertBatchCalls.push(records.length);
+    for (const record of records) this.rows.set(record.sourceId, record);
+  }
+  async allHashesBySourceId() {
+    return new Map([...this.rows.values()].map((r) => [r.sourceId, r.contentHash]));
   }
   async getLastSyncedAt() {
     const last = this.syncLogs.at(-1);
@@ -54,8 +62,13 @@ class FakeRepo implements IOppRepo {
 
 class CapturingSnapshotStore implements ISnapshotStore {
   readonly writes: { key: string; value: string }[] = [];
+  readonly putManyCalls: number[] = [];
   async put(key: string, value: string) {
     this.writes.push({ key, value });
+  }
+  async putMany(entries: Array<{ key: string; body: string }>) {
+    this.putManyCalls.push(entries.length);
+    for (const entry of entries) this.writes.push({ key: entry.key, value: entry.body });
   }
 }
 
@@ -196,6 +209,27 @@ describe('runSync', () => {
     expect(repo.syncLogs).toHaveLength(1);
     expect(repo.syncLogs[0]?.stats?.recordsInserted).toBe(3);
     expect(await repo.getLastSyncedAt()).toBeTypeOf('string');
+  });
+
+  it('uses one upsertBatch + one putMany call per run (not N per-record awaits)', async () => {
+    const { deps, repo, snapshots } = buildDeps(sources);
+    await runSync(deps);
+
+    // Three records → one batch write, one snapshot batch.
+    expect(repo.upsertBatchCalls).toEqual([3]);
+    expect(snapshots.putManyCalls).toEqual([3]);
+  });
+
+  it('pre-fetches existing hashes once instead of per-record findBySourceId lookups', async () => {
+    const { deps, repo, snapshots } = buildDeps(sources);
+    await runSync(deps);
+
+    // Second run: nothing changed, so toUpsert is empty and putMany is called
+    // with an empty list. The hashmap pre-fetch is the only DB read.
+    const stats = await runSync(deps);
+    expect(stats.recordsSkipped).toBe(3);
+    expect(repo.upsertBatchCalls).toEqual([3, 0]);
+    expect(snapshots.putManyCalls).toEqual([3, 0]);
   });
 
   it('captures and rethrows errors; sync_log records the failure', async () => {

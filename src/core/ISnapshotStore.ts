@@ -11,4 +11,12 @@
  */
 export interface ISnapshotStore {
   put(key: string, value: string): Promise<void>;
+
+  /**
+   * Bounded-parallel bulk write. The ETL hands off all changed-record
+   * snapshots in one call so implementations can pipeline the underlying
+   * object-store PUTs (e.g. up to 8 concurrent R2 fetches) rather than the
+   * ETL awaiting each one sequentially. Order of completion is unspecified.
+   */
+  putMany(entries: Array<{ key: string; body: string }>): Promise<void>;
 }
