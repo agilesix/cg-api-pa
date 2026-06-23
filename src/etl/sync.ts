@@ -23,12 +23,13 @@ export interface SyncDeps<TSource> {
   /**
    * Converts a raw source record + its freshly computed content hash into
    * the adapter-agnostic `StoredOpportunity` row that the repository stores.
-   * The adapter's `buildStoredOpportunity` composed with `paGrantToOpportunity`
-   * is the canonical implementation.
+   * The canonical implementation validates the record via the plugin's
+   * `toCommon` and builds the row with the generic `storedFromCommon()` (see
+   * `src/cg.config.ts`).
    *
-   * Returns `null` when the record can't be converted (e.g. the transform's
-   * post-Zod-parse validation rejected it). The runner counts these under
-   * `recordsSkipped` and continues; the adapter is expected to have logged
+   * Returns `null` when the record can't be converted (e.g. the plugin's
+   * `toCommon` reported validation `errors`). The runner counts these under
+   * `recordsSkipped` and continues; the caller is expected to have logged
    * the reason already.
    */
   toStored: (source: TSource, contentHash: string) => StoredOpportunity | null;

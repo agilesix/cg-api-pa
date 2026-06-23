@@ -8,3 +8,8 @@
 
 export { ProxyOppRepo } from './proxy';
 export { SqliteOppRepo, createDb, type Db, type DB } from './sql';
+export {
+  storedFromCommon,
+  type CgOpportunityLike,
+  type StoredFromCommonMeta,
+} from './storedFromCommon';

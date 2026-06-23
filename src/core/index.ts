@@ -10,7 +10,6 @@
  * the same lint rule that will be tightened in subsequent phases.
  */
 
-export type { IAdapter } from './IAdapter';
 export type { ISourceClient } from './ISourceClient';
 export type { IOppRepo } from './IOppRepo';
 export type { ISnapshotStore } from './ISnapshotStore';

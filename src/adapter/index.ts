@@ -5,40 +5,26 @@
  * should import from. Deep imports into `./plugin`, `./fields`, etc. are
  * forbidden by lint zones to keep the future package extraction cheap.
  *
- * The adapter bundles:
- *   - `PaAdapter`: the composed `IAdapter<PaGrant>` object
- *   - the CommonGrants Zod plugin (`PaPlugin`)
- *   - the HTTP client for the PA eGrants Beta API (`PaSourceClient`)
- *   - pure transforms that map raw PA records into CG opportunities
- *   - value schemas for custom-field values
+ * As of the SDK v0.5.0 migration there is no bespoke `IAdapter` seam: the
+ * `PaPlugin` (`@common-grants/sdk` `definePlugin()`) owns the schema,
+ * `sourceSchema`, and the bidirectional `toCommon` / `fromCommon` transforms.
+ * The only pieces that live outside the plugin are the operational hooks the
+ * SQL tier needs — `getSourceId` and `buildSearchText` — plus the HTTP client.
+ * See ADR 003 / 005 for the rationale.
  */
 
-import type { z } from 'zod';
-import type { IAdapter } from '../core';
-import { PaPlugin } from './plugin';
-import { PaGrantSchema, type PaGrant } from './paSource';
-import { PaSourceClient } from './PaSourceClient';
-import { paGrantToOpportunity, buildStoredOpportunity, buildSearchText } from './transform';
+import type { PaGrant } from './paSource';
 
-/**
- * The PA adapter — satisfies `IAdapter<PaGrant>`. This is the single
- * integration point that `cg.config.ts` wires into the server. Swapping
- * to a different source system means swapping this object.
- */
-export const PaAdapter: IAdapter<PaGrant> = {
-  plugin: PaPlugin,
-  // PaGrantSchema has .nullable().transform() chains that make the input/output
-  // types differ; the cast bridges the Zod inference gap.
-  sourceSchema: PaGrantSchema as unknown as z.ZodType<PaGrant>,
-  toCommonGrants: paGrantToOpportunity,
-  createSourceClient: (config) => new PaSourceClient(config['baseUrl'] as string),
-  buildStoredOpportunity,
-  buildSearchText,
-  getSourceId: (g) => g.slug,
-};
+/** Source-system identifier extractor — the per-source key used for upsert/snapshot keying. */
+export const getSourceId = (grant: PaGrant): string => grant.slug;
 
-// Plugin + schema
-export { PaPlugin, PaOpportunitySchema, type PaOpportunity } from './plugin';
+// Plugin + schema + types
+export {
+  PaPlugin,
+  PaOpportunitySchema,
+  type PaOpportunity,
+  type PaOpportunityInput,
+} from './plugin';
 
 // HTTP client
 export { PaSourceClient, PaApiError } from './PaSourceClient';
@@ -46,14 +32,15 @@ export { PaSourceClient, PaApiError } from './PaSourceClient';
 // Raw source schema + type (useful for fixtures / tests downstream)
 export { PaGrantSchema, PaGrantsListResponseSchema, type PaGrant } from './paSource';
 
-// Pure transform functions (exported so the ETL can use them directly)
+// Pure transform functions (exported so the ETL/tests can use them directly)
 export {
   paGrantToOpportunity,
-  buildStoredOpportunity,
+  paOpportunityToGrant,
   buildSearchText,
   slugToCgId,
   // Lower-level helpers are exported for testability / advanced use.
   normalizeStatus,
+  statusToPaString,
   parseContact,
   parseFinancial,
   moneyToCents,
@@ -61,8 +48,7 @@ export {
   nullIfEmpty,
   nullIfNotUrl,
   splitIsoDateTime,
-  TransformValidationError,
-  type PaOpportunityInput,
+  eventToIso,
 } from './transform';
 
 // Value schemas for custom-field values

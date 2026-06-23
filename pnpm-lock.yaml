@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       '@common-grants/sdk':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.0
       '@hono/zod-openapi':
         specifier: ^0.19.10
         version: 0.19.10(hono@4.12.22)(zod@3.25.76)
@@ -37,9 +37,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20260522.1
         version: 4.20260522.1
-      '@common-grants/cg-grants-gov':
-        specifier: ^0.1.0
-        version: 0.1.0(@common-grants/sdk@0.4.0)
       '@common-grants/cli':
         specifier: ^0.3.3
         version: 0.3.3(@types/node@22.19.17)
@@ -181,17 +178,13 @@ packages:
   '@cloudflare/workers-types@4.20260522.1':
     resolution: {integrity: sha512-UjKZprpYHAaBVipLfZA2GzTuWSTHyPXWRsaedwVEqyDe+VHwFi8RVtxGr1lceBDCwLDGRjlUwuwokX6O9GZY2A==}
 
-  '@common-grants/cg-grants-gov@0.1.0':
-    resolution: {integrity: sha512-K58zRzlRZHEEJHodUKPbJVeyA6WwOTOjezL0W3o78DPL1P7jSQIKWOhe16urh9Za9zQ4jvsPKHK+aj24QGOOWA==}
-    peerDependencies:
-      '@common-grants/sdk': ^0.4.0
-
   '@common-grants/cli@0.3.3':
     resolution: {integrity: sha512-STeBBtCDrhhps7GXCk5ftumbGNEe3lFFSL9K/kKKkA4JXb34QOq63cOLmMHQyVL52fsPKv8fxlKmgwbIr0fXiQ==}
     hasBin: true
 
-  '@common-grants/sdk@0.4.0':
-    resolution: {integrity: sha512-AbNXj8u25obKCYyQCNC7WwWV65zGAo1XTUJUWnABaTX9ej9ZGB4Z860FCnhWzcoCwjP+bGeibSH1X4gGOHl/xQ==}
+  '@common-grants/sdk@0.5.0':
+    resolution: {integrity: sha512-91/MsRcnoWBfPnw44r8qRWHMohNswJ0HWWnJ/luMosXT4XEcvp7ddchPEZkxfghB51HV6DThoOGRpk1b4JGiog==}
+    engines: {node: '>=22.0.0'}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -2836,10 +2829,6 @@ snapshots:
 
   '@cloudflare/workers-types@4.20260522.1': {}
 
-  '@common-grants/cg-grants-gov@0.1.0(@common-grants/sdk@0.4.0)':
-    dependencies:
-      '@common-grants/sdk': 0.4.0
-
   '@common-grants/cli@0.3.3(@types/node@22.19.17)':
     dependencies:
       '@apidevtools/swagger-parser': 10.1.1(openapi-types@12.1.3)
@@ -2857,7 +2846,7 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@common-grants/sdk@0.4.0':
+  '@common-grants/sdk@0.5.0':
     dependencies:
       zod: 3.25.76
 
