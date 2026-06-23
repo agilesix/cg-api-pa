@@ -1,6 +1,13 @@
 # ADR 003: Adapter-vs-plugin semantics and the integrations harness vision
 
-**Status:** Accepted (2026-04-15)
+**Status:** Superseded by [ADR 005](005-sdk-0.5.0-plugin-transforms.md) (2026-06-22)
+
+> **Superseded.** This ADR decided that adapters _contain_ plugins, keeping
+> transforms and the source client out of the SDK plugin. SDK v0.5.0 moved the
+> source schema and bidirectional transforms _into_ `definePlugin()`, so the
+> bespoke `IAdapter` seam was retired. The dependency objection raised below is
+> addressed by v0.5.0 keeping the HTTP client and storage helpers external to
+> the plugin. See ADR 005 for the current model.
 
 ## Context
 

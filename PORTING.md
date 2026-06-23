@@ -39,7 +39,11 @@ No database. Every request hits the upstream PA API, transforms on the fly, and 
 +  const repo = new ProxyOppRepo(client, (src: PaGrant) => {
 +    const opp = paGrantToOpportunity(src, new Date().toISOString());
 +    // Proxy tier doesn't use content hashing — pass the source id as the hash.
-+    return buildStoredOpportunity(src, opp, src.slug);
++    return storedFromCommon(opp, {
++      sourceId: getSourceId(src),
++      searchText: buildSearchText(src),
++      contentHash: src.slug,
++    });
 +  });
 +  const snapshots = new NoopSnapshotStore();
    const service = new OpportunityService(repo);
@@ -179,14 +183,14 @@ Example: an adapter for California's grants portal.
 
 2. **Replace `src/adapter/`** with a new adapter:
    - `fields.ts`: keep the mirrored shared schemas (`agency`, `contactInfo`, etc.) verbatim for cross-plugin interoperability. Add CA-specific fields as `ca*`.
-   - `plugin.ts`: `definePlugin({ extensions: { Opportunity: { ...shared + ...caSpecific } } })`.
+   - `plugin.ts`: `definePlugin({ meta, schemas: { Opportunity: { customFields: {...shared, ...caSpecific }, sourceSchema, toCommon, fromCommon } } })` (SDK v0.5.0 — the plugin owns the source schema and transforms; see ADR 005).
    - `CaGrantsClient.ts`: new `ISourceClient` for CA's upstream.
-   - `transform.ts`: CA's own `caGrantToOpportunity()` + helpers.
-   - `index.ts`: re-export the new public surface.
+   - `transform.ts`: CA's own pure `caGrantToOpportunity()` + reverse builder + helpers (no schema dependency).
+   - `index.ts`: re-export the new public surface, including the per-source `getSourceId` and `buildSearchText` hooks.
 
-3. **Update `src/cg.config.ts`** imports from `./adapter` — no other changes needed because the interface is the same.
+3. **Update `src/cg.config.ts`** imports from `./adapter`. The ETL validates each record via `plugin.schemas.Opportunity.toCommon()` (skipping on `errors`) and builds the stored row with the generic `storedFromCommon()` plus the two per-source hooks.
 
-4. **Verify cross-plugin alignment:** keep the alignment test in `__tests__/adapter/plugin.test.ts`, pointing at your adapter's schema — asserts that a fixture with shared custom fields validates under both your plugin AND grants.gov.
+4. **Verify shared-field alignment:** keep the alignment test in `__tests__/adapter/plugin.test.ts` — asserts that a fixture's shared custom-field values validate under your plugin's `commonSchema` and the mirrored value schemas. (The live cross-parse against `@common-grants/cg-grants-gov` is paused until a 0.5.0-compatible release ships; see the note in that test.)
 
 Everything else — routes, services, ETL, storage tiers, CI/CD, docs UI — is unchanged.
 
