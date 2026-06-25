@@ -11,6 +11,9 @@ concurrency:
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  # Set on the preview Worker by preview-create.sh so /admin/sync can be
+  # exercised on the preview (same secret as production).
+  SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
 
 jobs:
   deploy:
@@ -44,6 +47,12 @@ jobs:
             Worker: `pa-commongrants-api-pr-${{ github.event.pull_request.number }}`
             D1: `${{ steps.preview.outputs.db_name }}`
             Commit: `${{ github.sha }}`
+
+            Trigger a sync on this preview (SYNC_SECRET is set):
+            ```
+            curl -X POST '${{ steps.preview.outputs.url }}/admin/sync?force=true' \
+              -H "Authorization: Bearer $SYNC_SECRET"
+            ```
 
   cleanup:
     name: Clean up preview

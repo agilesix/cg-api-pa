@@ -1,0 +1,87 @@
+name: Manual sync
+
+# Manually trigger a sync against the deployed API by calling its
+# Bearer-authenticated admin endpoint (the same `runSync` the Cron uses).
+#
+# Setup (once per repo):
+#   - Repository secret  SYNC_SECRET           (already set for production)
+#   - Repository variable PRODUCTION_BASE_URL  e.g. https://pa-commongrants-api.<subdomain>.workers.dev
+#     (Settings → Secrets and variables → Actions → Variables)
+#
+# By default this runs a normal incremental sync (same as the Cron). Check the
+# `force` input to bypass the content-hash + watermark and re-transform every
+# upstream record — use that to repair stored rows after a transform change.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force full re-sync (bypass content-hash + watermark). Leave unchecked for a normal incremental sync.'
+        type: boolean
+        default: false
+      base_url:
+        description: 'Override API base URL (defaults to vars.PRODUCTION_BASE_URL)'
+        type: string
+        required: false
+
+concurrency:
+  group: manual-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Trigger admin sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: POST /admin/sync
+        env:
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+          BASE_URL: ${{ inputs.base_url || vars.PRODUCTION_BASE_URL }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::No base URL. Set the PRODUCTION_BASE_URL repo variable or pass the base_url input."
+            exit 1
+          fi
+          if [ -z "${SYNC_SECRET:-}" ]; then
+            echo "::error::SYNC_SECRET secret is not set."
+            exit 1
+          fi
+
+          url="${BASE_URL%/}/admin/sync"
+          if [ "${FORCE}" = "true" ]; then
+            url="${url}?force=true"
+          fi
+          echo "POST ${url}"
+
+          http=$(curl -sS -X POST "${url}" \
+            -H "Authorization: Bearer ${SYNC_SECRET}" \
+            --max-time 600 \
+            -o response.json -w '%{http_code}')
+
+          echo "HTTP ${http}"
+          cat response.json 2>/dev/null || true
+          echo ""
+
+          {
+            echo "### Manual sync — \`${GITHUB_REPOSITORY}\`"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| force | \`${FORCE}\` |"
+            echo "| endpoint | \`${url}\` |"
+            echo "| status | \`HTTP ${http}\` |"
+            echo ""
+            echo '```json'
+            cat response.json 2>/dev/null || echo "(no body)"
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${http}" != "200" ]; then
+            echo "::error::Sync failed (HTTP ${http})"
+            exit 1
+          fi
