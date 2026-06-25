@@ -1,8 +1,9 @@
 import { D1Dialect } from './storage/sql/d1-dialect';
 import {
+  PaPlugin,
   PaSourceClient,
-  TransformValidationError,
-  buildStoredOpportunity,
+  buildSearchText,
+  getSourceId,
   paGrantToOpportunity,
   type PaGrant,
 } from './adapter';
@@ -10,7 +11,7 @@ import type { IOppRepo, ISnapshotStore, Logger, SyncStats } from './core';
 import { runSync, type SyncOptions } from './etl';
 import { BucketSnapshotStore } from './snapshots';
 import { OpportunityService } from './services';
-import { SqliteOppRepo, createDb } from './storage/sql';
+import { SqliteOppRepo, createDb, storedFromCommon } from './storage';
 
 /**
  * Everything the Hono app (`createApp`) needs to run.
@@ -80,20 +81,28 @@ export function buildConfig(env: Cloudflare.Env, logger: Logger = console): AppC
         repo,
         snapshots,
         logger,
-        getSourceId: (g: PaGrant) => g.slug,
-        toStored: (g, contentHash) => {
-          try {
-            const opp = paGrantToOpportunity(g, new Date().toISOString());
-            return buildStoredOpportunity(g, opp, contentHash);
-          } catch (err) {
-            if (err instanceof TransformValidationError) {
-              logger.warn(
-                `[sync] skipping invalid record sourceId=${err.sourceId}: ${err.message}`,
-              );
-              return null;
-            }
-            throw err;
+        getSourceId,
+        toStored: (g: PaGrant, contentHash) => {
+          // Validate via the plugin's `toCommon`. `definePlugin()` wraps it
+          // with `commonSchema` validation, so any non-empty `errors` means the
+          // record wouldn't round-trip — skip it rather than persist data that
+          // would fail at read time.
+          const { errors } = PaPlugin.schemas.Opportunity.toCommon(g);
+          if (errors.length > 0) {
+            const detail = errors.map((e) => `${e.path || '<root>'}: ${e.message}`).join('; ');
+            logger.warn(`[sync] skipping invalid record sourceId=${getSourceId(g)}: ${detail}`);
+            return null;
           }
+          // Persist the canonical wire shape: the pure builder emits calendar
+          // dates as strings, whereas the SDK's *validated* `toCommon` output
+          // normalizes them to `Date` (which would serialize as datetimes in
+          // `rawJson`). Storage keeps the string shape.
+          const opp = paGrantToOpportunity(g, new Date().toISOString());
+          return storedFromCommon(opp, {
+            sourceId: getSourceId(g),
+            searchText: buildSearchText(g),
+            contentHash,
+          });
         },
       },
       options,

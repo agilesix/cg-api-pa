@@ -82,6 +82,22 @@ PREVIEW_URL=$(echo "$DEPLOY_OUTPUT" | grep -oE 'https://[^ ]+\.workers\.dev' | t
 echo "  ✓ Deployed: ${PREVIEW_URL:-unknown}"
 
 # -------------------------------------------------------------------------
+# 4b. Set SYNC_SECRET on the preview Worker so the Bearer-protected
+#     /admin/sync endpoint can be exercised on the preview (same secret as
+#     production). Skipped if SYNC_SECRET isn't in the environment (e.g. a
+#     local run without it) — the preview still deploys, but /admin/sync will
+#     reject calls until a secret is set.
+# -------------------------------------------------------------------------
+
+if [ -n "${SYNC_SECRET:-}" ]; then
+  echo "→ Setting SYNC_SECRET on ${WORKER_NAME}"
+  printf '%s' "${SYNC_SECRET}" | ${WRANGLER} secret put SYNC_SECRET --name "${WORKER_NAME}" --env preview
+  echo "  ✓ SYNC_SECRET set"
+else
+  echo "  ! SYNC_SECRET not provided — /admin/sync will reject calls on this preview"
+fi
+
+# -------------------------------------------------------------------------
 # 5. Emit outputs for CI
 # -------------------------------------------------------------------------
 

@@ -12,7 +12,8 @@ import type {
   StoredOpportunity,
   SyncStats,
 } from '../src/core';
-import { paGrantToOpportunity, buildStoredOpportunity } from '../src/adapter';
+import { buildSearchText, getSourceId, paGrantToOpportunity } from '../src/adapter';
+import { storedFromCommon } from '../src/storage';
 import { pdA1Fixture } from './adapter/fixtures';
 
 // -------------------------------------------------------------------------
@@ -64,7 +65,11 @@ class FakeRepo implements IOppRepo {
 
 function buildDeps(overrides: Partial<AppConfig> = {}): AppConfig {
   const opp = paGrantToOpportunity(pdA1Fixture, '2026-04-15T00:00:00Z');
-  const row = buildStoredOpportunity(pdA1Fixture, opp, 'hash-1');
+  const row = storedFromCommon(opp, {
+    sourceId: getSourceId(pdA1Fixture),
+    searchText: buildSearchText(pdA1Fixture),
+    contentHash: 'hash-1',
+  });
   const repo = overrides.repo ?? new FakeRepo([row]);
   return {
     repo,

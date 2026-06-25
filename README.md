@@ -34,10 +34,11 @@ The API fetches grant opportunity data from Pennsylvania's eGrants Beta API, nor
 │    BucketSnapshotStore  — R2 / S3 / GCS                         │
 │    NoopSnapshotStore    — disabled                               │
 ├─────────────────────────────────────────────────────────────────┤
-│  adapter/ (implements IAdapter<PaGrant>)                         │
-│    PaAdapter     — composed adapter object                      │
-│    plugin.ts     — definePlugin() → PaPlugin                    │
+│  adapter/                                                        │
+│    plugin.ts     — definePlugin() → PaPlugin (schema +          │
+│                    sourceSchema + toCommon/fromCommon + meta)   │
 │    transform.ts  — paGrantToOpportunity() pure fn               │
+│    getSourceId / buildSearchText — per-source SQL-tier hooks    │
 │    PaSourceClient — ISourceClient for PA eGrants Beta           │
 │    (future: extract to @common-grants/cg-pa)                    │
 └─────────────────────────────────────────────────────────────────┘

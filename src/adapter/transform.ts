@@ -1,19 +1,16 @@
 import { v5 as uuidv5 } from 'uuid';
-import type { z, ZodIssue } from 'zod';
 import type { PaGrant } from './paSource';
-import { PaOpportunitySchema } from './plugin';
-import type { StoredOpportunity } from '../core';
+import type { PaOpportunityInput } from './plugin';
 
 /**
- * The **input** type of the PA-extended Opportunity schema — i.e. the plain
- * JSON shape before Zod applies its `.transform()` steps.
- *
- * The SDK's `UTCDateTimeSchema` and `ISODateSchema` transform strings into
- * `Date` objects on parse. Our transform functions emit the raw-string shape;
- * callers that want runtime validation + Date objects call
- * `PaOpportunitySchema.parse(input)`.
+ * Pure mapping logic between raw PA grant records and the CommonGrants
+ * `Opportunity` shape. No I/O, no DB, no Workers types, and — importantly —
+ * **no schema dependency**: validation lives in the plugin's `toCommon` /
+ * `fromCommon` wrappers (`./plugin`), which fold any Zod issues into the
+ * SDK's `TransformResult.errors`. Keeping this module schema-free avoids a
+ * circular import (`plugin` → `transform` for the builders; `transform` →
+ * `plugin` only for the input *type*, which is erased at runtime).
  */
-export type PaOpportunityInput = z.input<typeof PaOpportunitySchema>;
 
 /** Element type of `PaOpportunityInput.keyDates.otherDates`. */
 type OtherDateInput = NonNullable<
@@ -22,32 +19,6 @@ type OtherDateInput = NonNullable<
 
 /** Element type of `PaOpportunityInput.customFields`. */
 type CustomFieldInput = NonNullable<PaOpportunityInput['customFields']>[string];
-
-// =============================================================================
-// Errors
-// =============================================================================
-
-/**
- * Thrown by `paGrantToOpportunity` when the post-transform object fails
- * `PaOpportunitySchema.safeParse(...)`. Carries the offending Zod issues so
- * callers (the ETL `toStored` wrapper, tests) can log structured details
- * before deciding whether to skip the record or rethrow.
- */
-export class TransformValidationError extends Error {
-  readonly issues: ZodIssue[];
-  readonly sourceId: string;
-
-  constructor(sourceId: string, issues: ZodIssue[]) {
-    super(
-      `paGrantToOpportunity produced invalid output for "${sourceId}": ${issues
-        .map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`)
-        .join('; ')}`,
-    );
-    this.name = 'TransformValidationError';
-    this.sourceId = sourceId;
-    this.issues = issues;
-  }
-}
 
 // =============================================================================
 // UUID v5 namespace
@@ -206,6 +177,22 @@ export function splitIsoDateTime(iso: string | null): { date: string; time: stri
   };
 }
 
+/**
+ * Inverse of `splitIsoDateTime` for a CG single-date event: recombine
+ * `{ date, time }` into an ISO 8601 string. Returns null for non-singleDate
+ * events (dateRange / other) or missing dates — used by `fromCommon` to
+ * reconstruct PA's flat datetime strings.
+ */
+export function eventToIso(event: unknown): string | null {
+  if (!event || typeof event !== 'object') return null;
+  const e = event as { eventType?: unknown; date?: unknown; time?: unknown };
+  if (e.eventType !== 'singleDate') return null;
+  // The output shape carries `Date`; the input/string shape carries `"YYYY-MM-DD"`.
+  const date = e.date instanceof Date ? e.date.toISOString().slice(0, 10) : e.date;
+  if (typeof date !== 'string') return null;
+  return typeof e.time === 'string' && e.time ? `${date}T${e.time}` : date;
+}
+
 // =============================================================================
 // Status mapping
 // =============================================================================
@@ -214,6 +201,13 @@ const STATUS_MAP: Record<string, 'forecasted' | 'open' | 'closed'> = {
   'accepting applications': 'open',
   closed: 'closed',
   forecasted: 'forecasted',
+};
+
+/** Canonical PA label for each mapped CG status (used by `fromCommon`). */
+const STATUS_REVERSE_MAP: Record<'forecasted' | 'open' | 'closed', string> = {
+  open: 'Accepting applications',
+  closed: 'Closed',
+  forecasted: 'Forecasted',
 };
 
 /**
@@ -231,6 +225,20 @@ export function normalizeStatus(raw: string | null): {
   if (mapped) return { value: mapped, customValue: null };
   if (norm === '') return { value: 'custom', customValue: null };
   return { value: 'custom', customValue: raw };
+}
+
+/**
+ * Inverse of `normalizeStatus`. `custom` returns its `customValue`; the three
+ * enum values map back to PA's canonical label. **Lossy:** the original PA
+ * casing/phrasing of a mapped status (e.g. `"ACCEPTING APPLICATIONS"`) is not
+ * recoverable — the canonical label is returned instead.
+ */
+export function statusToPaString(status: {
+  value: 'forecasted' | 'open' | 'closed' | 'custom';
+  customValue?: string | null;
+}): string {
+  if (status.value === 'custom') return status.customValue ?? '';
+  return STATUS_REVERSE_MAP[status.value];
 }
 
 // =============================================================================
@@ -290,22 +298,24 @@ export function parseContact(raw: { name?: string | null } | null | undefined): 
 }
 
 // =============================================================================
-// Core transform: PaGrant → PaOpportunity
+// Core transform: PaGrant → PaOpportunity (input shape)
 // =============================================================================
 
 /**
  * Convert a raw PA grant record into a CommonGrants `Opportunity` with PA
- * custom fields attached. Pure function — no I/O, no DB, no Workers types.
+ * custom fields attached. Pure function — no I/O, no DB, no Workers types,
+ * **no validation**.
  *
- * Returns the **input** shape (strings everywhere, no `Date` objects) so
- * callers can serialize directly to JSON. Before returning, the result is
- * validated with `PaOpportunitySchema.safeParse(...)`; on failure a
- * `TransformValidationError` is thrown so the ETL skips the record instead
- * of persisting data that would 502 the consumer at read time.
+ * Returns the **input** shape (strings everywhere, no `Date` objects) so the
+ * result can be serialized directly to JSON. The CG date schemas
+ * (`UTCDateTimeSchema`, etc.) accept string input and normalize to `Date`
+ * internally, so emitting strings is correct and avoids dual-instance pitfalls.
+ * Validation against the extended schema is performed by the plugin's
+ * `toCommon` wrapper (see `./plugin`), which surfaces any issues via
+ * `TransformResult.errors`.
  *
  * The `syncedAt` argument is the ISO timestamp of the current ETL run; it
- * is stored in the `paLastSyncedAt` custom field and used as the `createdAt`
- * fallback when the source has no creation timestamp.
+ * is stored in the `paLastSyncedAt` custom field.
  */
 export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportunityInput {
   const status = normalizeStatus(pa.status);
@@ -421,15 +431,17 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
   }
 
   if (matchingRatioValid) {
+    // The matching requirement lives inside costSharing (the catalog's "cost
+    // sharing or matching requirement" field). PA reports a 0–1 ratio; the
+    // catalog `percentage` is 0–100.
     customFields['costSharing'] = {
       name: 'costSharing',
       fieldType: 'object',
-      value: { isRequired: matchingRequired },
-    };
-    customFields['paMatchingFundsRequirement'] = {
-      name: 'paMatchingFundsRequirement',
-      fieldType: 'number',
-      value: matchingRatio,
+      value: {
+        isRequired: matchingRequired,
+        percentage: (matchingRatio as number) * 100,
+        details: null,
+      },
     };
   }
 
@@ -447,16 +459,16 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
   }
   const fundingType = nullIfEmpty(pa.fundingType);
   if (fundingType !== null) {
-    customFields['paFundingType'] = {
-      name: 'paFundingType',
+    customFields['fundingInstrument'] = {
+      name: 'fundingInstrument',
       fieldType: 'string',
       value: fundingType,
     };
   }
   const fundingSource = nullIfEmpty(pa.fundingSource);
   if (fundingSource !== null) {
-    customFields['paFundingSource'] = {
-      name: 'paFundingSource',
+    customFields['fundingSource'] = {
+      name: 'fundingSource',
       fieldType: 'string',
       value: fundingSource,
     };
@@ -499,8 +511,8 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
     customFields['paFaqs'] = { name: 'paFaqs', fieldType: 'array', value: pa.FAQs };
   }
 
-  customFields['paLastSyncedAt'] = {
-    name: 'paLastSyncedAt',
+  customFields['lastSyncedAt'] = {
+    name: 'lastSyncedAt',
     fieldType: 'string',
     value: syncedAt,
   };
@@ -570,11 +582,134 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
     lastModifiedAt,
   };
 
-  const parsed = PaOpportunitySchema.safeParse(opp);
-  if (!parsed.success) {
-    throw new TransformValidationError(pa.slug, parsed.error.issues);
-  }
   return opp;
+}
+
+// =============================================================================
+// Reverse transform: PaOpportunity → PaGrant (best-effort)
+// =============================================================================
+
+/** Read a custom-field value off a CG opportunity, or `undefined` if absent. */
+function cfValue(opp: PaOpportunityInput, key: string): unknown {
+  return opp.customFields?.[key]?.value;
+}
+
+/** Coerce a custom-field value to a non-empty string, else `""` (PA's empty shape). */
+function cfString(opp: PaOpportunityInput, key: string): string {
+  const v = cfValue(opp, key);
+  return typeof v === 'string' ? v : '';
+}
+
+/**
+ * Reverse of `paGrantToOpportunity`: reconstruct a raw `PaGrant` from a CG
+ * opportunity. Pure, no validation.
+ *
+ * **Best-effort and lossy by design.** PA fields with no CommonGrants home are
+ * dropped by `paGrantToOpportunity` and therefore cannot be recovered here;
+ * they are emitted as `""` (matching PA's present-but-empty convention):
+ *
+ *   - `shortDescription` (folded into `description`)
+ *   - `applicantType`, `applicantCategory`, `eligibility`,
+ *     `reportingMonitoring`, `populationServedType`, `populationServedGeography`
+ *     (never mapped onto the CG schema)
+ *
+ * Additionally, `overview` loses its original HTML (only the stripped
+ * `description` survives) and a mapped `status` loses its original PA phrasing
+ * (the canonical label is returned). These drops are asserted in the adapter
+ * test suite so the round-trip contract stays explicit.
+ */
+export function paOpportunityToGrant(opp: PaOpportunityInput): PaGrant {
+  const keyDates = opp.keyDates ?? null;
+  const otherDates = keyDates?.otherDates ?? null;
+
+  const agency = cfValue(opp, 'agency') as { code?: unknown; name?: unknown } | undefined;
+  const additionalInfo = cfValue(opp, 'additionalInfo') as { url?: unknown } | undefined;
+  const contact = cfValue(opp, 'contactInfo') as
+    | { name?: unknown; email?: unknown; phone?: unknown; description?: unknown }
+    | undefined;
+  const legacySerialId = cfValue(opp, 'legacySerialId');
+  const costSharing = cfValue(opp, 'costSharing') as { percentage?: unknown } | undefined;
+  const matchingPercentage = costSharing?.percentage;
+
+  const funding = opp.funding ?? null;
+  const minimumAward = moneyToPaString(funding?.minAwardAmount) ?? cfString(opp, 'paRawMinAward');
+  const maximumAward = moneyToPaString(funding?.maxAwardAmount) ?? cfString(opp, 'paRawMaxAward');
+  const totalFundsToBeAwarded =
+    moneyToPaString(funding?.totalAmountAvailable) ?? cfString(opp, 'paRawTotalFunds');
+
+  // Reassemble the mashed pointOfContact.name from the structured contact.
+  const contactName =
+    contact != null
+      ? [contact.name, contact.phone, contact.email, contact.description]
+          .filter((p): p is string => typeof p === 'string' && p.length > 0)
+          .join(', ')
+      : '';
+
+  const anticipatedFundingDetails = (
+    otherDates?.['anticipatedFunding'] as { details?: unknown } | undefined
+  )?.details;
+
+  return {
+    slug: cfString(opp, 'paSlug'),
+    title: opp.title,
+    status: statusToPaString(opp.status),
+    category: cfString(opp, 'paCategory'),
+    issuingAgency: typeof agency?.name === 'string' ? agency.name : '',
+    shortIssuingAgency: typeof agency?.code === 'string' ? agency.code : '',
+    last_modified: isoString(opp.lastModifiedAt),
+    overview: opp.description,
+    shortDescription: '',
+    openDate: eventToIso(keyDates?.postDate) ?? '',
+    closeDate: eventToIso(keyDates?.closeDate) ?? '',
+    decisionDate: eventToIso(otherDates?.['decisionDate']) ?? '',
+    anticipatedFundingDate: eventToIso(otherDates?.['anticipatedFundingDate']) ?? '',
+    grantCycle: cfString(opp, 'paGrantCycle'),
+    fundingType: cfString(opp, 'fundingInstrument'),
+    fundingSource: cfString(opp, 'fundingSource'),
+    minimumAward,
+    maximumAward,
+    totalFundsToBeAwarded,
+    anticipatedFunding:
+      typeof anticipatedFundingDetails === 'string' ? anticipatedFundingDetails : '',
+    matchingFundsRequirements:
+      typeof matchingPercentage === 'number' ? String(matchingPercentage / 100) : '',
+    applicantType: '',
+    applicantCategory: '',
+    eligibility: '',
+    reportingMonitoring: '',
+    populationServedType: '',
+    populationServedGeography: '',
+    issuingAgencyGrantNumber: typeof legacySerialId === 'number' ? legacySerialId : null,
+    issuingAgencyUrl: typeof additionalInfo?.url === 'string' ? additionalInfo.url : '',
+    linkToApply: isoSource(opp.source) ?? cfString(opp, 'paRawLinkToApply'),
+    pointOfContact: { name: contactName },
+    processSteps: (cfValue(opp, 'paProcessSteps') as PaGrant['processSteps']) ?? [],
+    additionalResources:
+      (cfValue(opp, 'paAdditionalResources') as PaGrant['additionalResources']) ?? [],
+    FAQs: (cfValue(opp, 'paFaqs') as PaGrant['FAQs']) ?? [],
+  };
+}
+
+/** Convert a CG `Money`-shaped value back to PA's plain dollar string, or null. */
+function moneyToPaString(money: { amount?: unknown } | null | undefined): string | null {
+  if (!money || typeof money.amount !== 'string') return null;
+  const n = Number(money.amount);
+  if (!Number.isFinite(n)) return null;
+  // PA emits whole-dollar strings; drop a trailing ".00" for fidelity.
+  return Number.isInteger(n) ? String(n) : money.amount;
+}
+
+/** Coerce a datetime that may already be a string or a `Date` to an ISO string. */
+function isoString(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (v instanceof Date) return v.toISOString();
+  return '';
+}
+
+/** Coerce `source` (string | Date | null) to a string URL or null. */
+function isoSource(v: unknown): string | null {
+  if (typeof v === 'string') return v;
+  return null;
 }
 
 // =============================================================================
@@ -598,36 +733,4 @@ export function buildSearchText(pa: PaGrant): string {
     .filter((p) => p.length > 0)
     .join(' ')
     .replace(/\s+/g, ' ');
-}
-
-// =============================================================================
-// Row builder: StoredOpportunity from a PaGrant + its transformed PaOpportunity
-// =============================================================================
-
-/**
- * Build the adapter-agnostic `StoredOpportunity` row from a PA grant and its
- * transformed opportunity input. This is what the ETL upserts into the
- * repository; the service layer deserializes `rawJson` back and (optionally)
- * runs it through `PaOpportunitySchema.parse()` for full typed validation.
- */
-export function buildStoredOpportunity(
-  pa: PaGrant,
-  opp: PaOpportunityInput,
-  contentHash: string,
-): StoredOpportunity {
-  return {
-    id: opp.id,
-    sourceId: pa.slug,
-    title: opp.title,
-    status: opp.status.value,
-    closeDate: nullIfEmpty(pa.closeDate),
-    postDate: nullIfEmpty(pa.openDate),
-    minAwardAmountCents: moneyToCents(opp.funding?.minAwardAmount),
-    maxAwardAmountCents: moneyToCents(opp.funding?.maxAwardAmount),
-    totalAmountAvailableCents: moneyToCents(opp.funding?.totalAmountAvailable),
-    searchText: buildSearchText(pa),
-    contentHash,
-    lastModifiedAt: opp.lastModifiedAt,
-    rawJson: JSON.stringify(opp),
-  };
 }

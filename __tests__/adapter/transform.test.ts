@@ -1,19 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSearchText,
-  buildStoredOpportunity,
   moneyToCents,
   normalizeStatus,
   nullIfEmpty,
   nullIfNotUrl,
   PaOpportunitySchema,
   paGrantToOpportunity,
+  paOpportunityToGrant,
   parseContact,
   parseFinancial,
   slugToCgId,
   splitIsoDateTime,
+  statusToPaString,
   stripHtml,
-  TransformValidationError,
 } from '../../src/adapter';
 import { pdA1Fixture, pdA2FixtureEdgeCases } from './fixtures';
 
@@ -304,14 +304,11 @@ describe('paGrantToOpportunity (happy path)', () => {
     });
   });
 
-  it('populates the shared `costSharing` and PA-specific ratio when matching funds are required', () => {
+  it('folds matching funds into the shared `costSharing` (isRequired + percentage)', () => {
+    // PA reports a 0–1 ratio (0.5); the catalog `percentage` is 0–100.
     expect(opp.customFields?.['costSharing']).toMatchObject({
       fieldType: 'object',
-      value: { isRequired: true },
-    });
-    expect(opp.customFields?.['paMatchingFundsRequirement']).toMatchObject({
-      fieldType: 'number',
-      value: 0.5,
+      value: { isRequired: true, percentage: 50 },
     });
   });
 
@@ -326,12 +323,12 @@ describe('paGrantToOpportunity (happy path)', () => {
     expect(opp.customFields?.['paSlug']?.value).toBe('pda1');
     expect(opp.customFields?.['paCategory']?.value).toBe('Agriculture');
     expect(opp.customFields?.['paGrantCycle']?.value).toBe('Annual');
-    expect(opp.customFields?.['paFundingType']?.value).toBe('Grant');
-    expect(opp.customFields?.['paFundingSource']?.value).toBe('State');
+    expect(opp.customFields?.['fundingInstrument']?.value).toBe('Grant');
+    expect(opp.customFields?.['fundingSource']?.value).toBe('State');
     expect(opp.customFields?.['paProcessSteps']?.value).toHaveLength(2);
     expect(opp.customFields?.['paAdditionalResources']?.value).toHaveLength(1);
     expect(opp.customFields?.['paFaqs']?.value).toHaveLength(1);
-    expect(opp.customFields?.['paLastSyncedAt']?.value).toBe('2026-04-15T00:00:00Z');
+    expect(opp.customFields?.['lastSyncedAt']?.value).toBe('2026-04-15T00:00:00Z');
   });
 
   it('produces output that passes full PaOpportunitySchema validation', () => {
@@ -402,60 +399,68 @@ describe('paGrantToOpportunity (linkToApply coercion)', () => {
   });
 });
 
-describe('paGrantToOpportunity (post-transform validation)', () => {
-  it('throws TransformValidationError when the produced object fails schema validation', () => {
-    // `last_modified` is passed straight through into `lastModifiedAt`, which
-    // the SDK validates as a UTC datetime — a garbage value reliably trips
-    // the post-transform safe-parse without us having to fake the schema.
-    const bad: typeof pdA1Fixture = {
-      ...pdA1Fixture,
-      slug: 'pda-bad-modified',
-      last_modified: 'not-a-datetime',
-    };
-    expect(() => paGrantToOpportunity(bad, '2026-04-27T00:00:00Z')).toThrow(
-      TransformValidationError,
-    );
+describe('statusToPaString', () => {
+  it('maps the CG enum back to PA canonical labels', () => {
+    expect(statusToPaString({ value: 'open' })).toBe('Accepting applications');
+    expect(statusToPaString({ value: 'closed' })).toBe('Closed');
+    expect(statusToPaString({ value: 'forecasted' })).toBe('Forecasted');
   });
 
-  it('attaches the source slug and the offending Zod issues on the thrown error', () => {
-    const bad: typeof pdA1Fixture = {
-      ...pdA1Fixture,
-      slug: 'pda-bad-modified-2',
-      last_modified: 'not-a-datetime',
-    };
-    try {
-      paGrantToOpportunity(bad, '2026-04-27T00:00:00Z');
-      throw new Error('expected paGrantToOpportunity to throw');
-    } catch (err) {
-      expect(err).toBeInstanceOf(TransformValidationError);
-      const tve = err as TransformValidationError;
-      expect(tve.sourceId).toBe('pda-bad-modified-2');
-      expect(tve.issues.length).toBeGreaterThan(0);
-      expect(tve.issues.some((i) => i.path.includes('lastModifiedAt'))).toBe(true);
-    }
+  it('returns the customValue for a custom status', () => {
+    expect(statusToPaString({ value: 'custom', customValue: 'Pending Review' })).toBe(
+      'Pending Review',
+    );
+    expect(statusToPaString({ value: 'custom', customValue: null })).toBe('');
   });
 });
 
-describe('buildStoredOpportunity', () => {
-  it('produces a StoredOpportunity with cents-denominated funding and a JSON-serialized opportunity', () => {
-    const opp = paGrantToOpportunity(pdA1Fixture, '2026-04-15T00:00:00Z');
-    const row = buildStoredOpportunity(pdA1Fixture, opp, 'deadbeef');
+describe('paOpportunityToGrant (reverse, best-effort round-trip)', () => {
+  const opp = paGrantToOpportunity(pdA1Fixture, '2026-04-15T00:00:00Z');
+  const grant = paOpportunityToGrant(opp);
 
-    expect(row).toMatchObject({
-      id: slugToCgId('pda1'),
-      sourceId: 'pda1',
-      title: '4-H Reimbursement',
-      status: 'open',
-      minAwardAmountCents: 100_000,
-      maxAwardAmountCents: 750_000,
-      totalAmountAvailableCents: 50_000_000,
-      contentHash: 'deadbeef',
-    });
-    expect(row.searchText).toContain('Agriculture');
+  it('recovers fields that have a clean CommonGrants inverse', () => {
+    expect(grant.slug).toBe('pda1');
+    expect(grant.title).toBe('4-H Reimbursement');
+    expect(grant.status).toBe('Accepting applications');
+    expect(grant.category).toBe('Agriculture');
+    expect(grant.issuingAgency).toBe('Agriculture');
+    expect(grant.shortIssuingAgency).toBe('pda');
+    expect(grant.issuingAgencyUrl).toBe('https://www.pa.gov/en/agencies/pda.html');
+    expect(grant.issuingAgencyGrantNumber).toBe(1);
+    expect(grant.linkToApply).toBe('https://grants.pa.gov/Login.aspx');
+    expect(grant.grantCycle).toBe('Annual');
+    expect(grant.matchingFundsRequirements).toBe('0.5');
+  });
 
-    // rawJson round-trips to the same structure.
-    const parsed = JSON.parse(row.rawJson);
-    expect(parsed.id).toBe(opp.id);
-    expect(parsed.title).toBe(opp.title);
+  it('recovers funding as plain whole-dollar strings', () => {
+    expect(grant.minimumAward).toBe('1000');
+    expect(grant.maximumAward).toBe('7500');
+    expect(grant.totalFundsToBeAwarded).toBe('500000');
+  });
+
+  it('recovers dates by recombining the split CG events', () => {
+    expect(grant.openDate).toBe('2024-08-01T12:00:00');
+    expect(grant.closeDate).toBe('2024-11-15T12:00:00');
+    expect(grant.decisionDate).toBe('2025-01-15T00:00:00');
+  });
+
+  it('reassembles the structured contact back into pointOfContact.name', () => {
+    expect(grant.pointOfContact?.name).toBe('Tracey Barone, tbarone@pa.gov');
+  });
+
+  it('carries array custom fields through unchanged', () => {
+    expect(grant.processSteps).toHaveLength(2);
+    expect(grant.additionalResources).toHaveLength(1);
+    expect(grant.FAQs).toHaveLength(1);
+  });
+
+  it('emits documented lossy fields as empty strings (no CommonGrants home)', () => {
+    expect(grant.shortDescription).toBe('');
+    expect(grant.applicantType).toBe('');
+    expect(grant.applicantCategory).toBe('');
+    expect(grant.eligibility).toBe('');
+    expect(grant.reportingMonitoring).toBe('');
+    expect(grant.populationServedType).toBe('');
+    expect(grant.populationServedGeography).toBe('');
   });
 });
