@@ -431,15 +431,17 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
   }
 
   if (matchingRatioValid) {
+    // The matching requirement lives inside costSharing (the catalog's "cost
+    // sharing or matching requirement" field). PA reports a 0–1 ratio; the
+    // catalog `percentage` is 0–100.
     customFields['costSharing'] = {
       name: 'costSharing',
       fieldType: 'object',
-      value: { isRequired: matchingRequired },
-    };
-    customFields['paMatchingFundsRequirement'] = {
-      name: 'paMatchingFundsRequirement',
-      fieldType: 'number',
-      value: matchingRatio,
+      value: {
+        isRequired: matchingRequired,
+        percentage: (matchingRatio as number) * 100,
+        details: null,
+      },
     };
   }
 
@@ -457,16 +459,16 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
   }
   const fundingType = nullIfEmpty(pa.fundingType);
   if (fundingType !== null) {
-    customFields['paFundingType'] = {
-      name: 'paFundingType',
+    customFields['fundingInstrument'] = {
+      name: 'fundingInstrument',
       fieldType: 'string',
       value: fundingType,
     };
   }
   const fundingSource = nullIfEmpty(pa.fundingSource);
   if (fundingSource !== null) {
-    customFields['paFundingSource'] = {
-      name: 'paFundingSource',
+    customFields['fundingSource'] = {
+      name: 'fundingSource',
       fieldType: 'string',
       value: fundingSource,
     };
@@ -509,8 +511,8 @@ export function paGrantToOpportunity(pa: PaGrant, syncedAt: string): PaOpportuni
     customFields['paFaqs'] = { name: 'paFaqs', fieldType: 'array', value: pa.FAQs };
   }
 
-  customFields['paLastSyncedAt'] = {
-    name: 'paLastSyncedAt',
+  customFields['lastSyncedAt'] = {
+    name: 'lastSyncedAt',
     fieldType: 'string',
     value: syncedAt,
   };
@@ -626,7 +628,8 @@ export function paOpportunityToGrant(opp: PaOpportunityInput): PaGrant {
     | { name?: unknown; email?: unknown; phone?: unknown; description?: unknown }
     | undefined;
   const legacySerialId = cfValue(opp, 'legacySerialId');
-  const matchingRatio = cfValue(opp, 'paMatchingFundsRequirement');
+  const costSharing = cfValue(opp, 'costSharing') as { percentage?: unknown } | undefined;
+  const matchingPercentage = costSharing?.percentage;
 
   const funding = opp.funding ?? null;
   const minimumAward = moneyToPaString(funding?.minAwardAmount) ?? cfString(opp, 'paRawMinAward');
@@ -661,14 +664,15 @@ export function paOpportunityToGrant(opp: PaOpportunityInput): PaGrant {
     decisionDate: eventToIso(otherDates?.['decisionDate']) ?? '',
     anticipatedFundingDate: eventToIso(otherDates?.['anticipatedFundingDate']) ?? '',
     grantCycle: cfString(opp, 'paGrantCycle'),
-    fundingType: cfString(opp, 'paFundingType'),
-    fundingSource: cfString(opp, 'paFundingSource'),
+    fundingType: cfString(opp, 'fundingInstrument'),
+    fundingSource: cfString(opp, 'fundingSource'),
     minimumAward,
     maximumAward,
     totalFundsToBeAwarded,
     anticipatedFunding:
       typeof anticipatedFundingDetails === 'string' ? anticipatedFundingDetails : '',
-    matchingFundsRequirements: typeof matchingRatio === 'number' ? String(matchingRatio) : '',
+    matchingFundsRequirements:
+      typeof matchingPercentage === 'number' ? String(matchingPercentage / 100) : '',
     applicantType: '',
     applicantCategory: '',
     eligibility: '',

@@ -77,7 +77,10 @@ describe('shared-field alignment (mirrored from grants.gov)', () => {
       name: 'Tracey Barone',
       email: 'tbarone@pa.gov',
     });
-    expect(parsed.customFields?.['costSharing']?.value).toEqual({ isRequired: true });
+    expect(parsed.customFields?.['costSharing']?.value).toMatchObject({
+      isRequired: true,
+      percentage: 50,
+    });
     expect(parsed.customFields?.['legacySerialId']?.value).toBe(1);
   });
 });

@@ -47,8 +47,20 @@ export const AdditionalInfoValueSchema = z.object({
   description: z.string().nullish(),
 });
 
+/**
+ * Cost sharing / matching requirement — mirrored verbatim from the grants.gov
+ * `CustomCostSharing` value (commongrants.org catalog). The matching-funds
+ * requirement lives here rather than in a separate custom field:
+ *   - `isRequired` — whether cost sharing / matching funds are required
+ *   - `percentage` — required match as a percentage, 0–100 (e.g. `25.0`)
+ *   - `details`    — free-text description (type, waiver info, notes)
+ * Kept byte-identical between the PA and CA plugins so cross-source consumers
+ * see one shape.
+ */
 export const CostSharingValueSchema = z.object({
   isRequired: z.boolean().nullish(),
+  percentage: z.number().nullish(),
+  details: z.string().nullish(),
 });
 
 // =============================================================================

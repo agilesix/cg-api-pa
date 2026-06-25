@@ -57,7 +57,26 @@ const paCustomFields = {
   costSharing: {
     fieldType: 'object',
     value: CostSharingValueSchema,
-    description: 'Whether cost sharing or matching funds are required for this opportunity',
+    description: 'Cost sharing or matching requirement for the opportunity',
+  },
+
+  // --- cross-source shared (unprefixed; defined identically in the CA plugin)
+  // Open-ended labels whose meaning is equivalent across state sources, so the
+  // key is shared rather than `pa*`/`ca*`-prefixed. Candidates to upstream into
+  // the commongrants.org custom-field catalog.
+  fundingSource: {
+    fieldType: 'string',
+    description:
+      'Where the funding originates (e.g. "State", "Federal", "Federal and State", "Other")',
+  },
+  fundingInstrument: {
+    fieldType: 'string',
+    description: 'The funding instrument type (e.g. "Grant", "Loan")',
+  },
+  lastSyncedAt: {
+    fieldType: 'string',
+    value: z.string().datetime(),
+    description: 'ISO 8601 datetime when this record was last ingested from its source system',
   },
 
   // --- PA-specific -----------------------------------------------------
@@ -72,20 +91,6 @@ const paCustomFields = {
   paGrantCycle: {
     fieldType: 'string',
     description: 'PA grant cycle label (e.g. "Annual")',
-  },
-  paFundingType: {
-    fieldType: 'string',
-    description: 'PA funding type label (e.g. "Grant", "Loan")',
-  },
-  paFundingSource: {
-    fieldType: 'string',
-    description: 'PA funding source label (e.g. "State", "Federal")',
-  },
-  paMatchingFundsRequirement: {
-    fieldType: 'number',
-    value: z.number().min(0).max(1),
-    description:
-      'Exact matching-funds ratio (0–1) reported by PA. Complements the standard `costSharing.isRequired` with the numeric value.',
   },
   paRawMinAward: {
     fieldType: 'string',
@@ -121,11 +126,6 @@ const paCustomFields = {
     fieldType: 'array',
     value: z.array(PaFaqSchema),
     description: 'Frequently asked questions for the opportunity',
-  },
-  paLastSyncedAt: {
-    fieldType: 'string',
-    value: z.string().datetime(),
-    description: 'ISO 8601 datetime when this record was last ingested from PA',
   },
 } as const;
 

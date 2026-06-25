@@ -304,14 +304,11 @@ describe('paGrantToOpportunity (happy path)', () => {
     });
   });
 
-  it('populates the shared `costSharing` and PA-specific ratio when matching funds are required', () => {
+  it('folds matching funds into the shared `costSharing` (isRequired + percentage)', () => {
+    // PA reports a 0–1 ratio (0.5); the catalog `percentage` is 0–100.
     expect(opp.customFields?.['costSharing']).toMatchObject({
       fieldType: 'object',
-      value: { isRequired: true },
-    });
-    expect(opp.customFields?.['paMatchingFundsRequirement']).toMatchObject({
-      fieldType: 'number',
-      value: 0.5,
+      value: { isRequired: true, percentage: 50 },
     });
   });
 
@@ -326,12 +323,12 @@ describe('paGrantToOpportunity (happy path)', () => {
     expect(opp.customFields?.['paSlug']?.value).toBe('pda1');
     expect(opp.customFields?.['paCategory']?.value).toBe('Agriculture');
     expect(opp.customFields?.['paGrantCycle']?.value).toBe('Annual');
-    expect(opp.customFields?.['paFundingType']?.value).toBe('Grant');
-    expect(opp.customFields?.['paFundingSource']?.value).toBe('State');
+    expect(opp.customFields?.['fundingInstrument']?.value).toBe('Grant');
+    expect(opp.customFields?.['fundingSource']?.value).toBe('State');
     expect(opp.customFields?.['paProcessSteps']?.value).toHaveLength(2);
     expect(opp.customFields?.['paAdditionalResources']?.value).toHaveLength(1);
     expect(opp.customFields?.['paFaqs']?.value).toHaveLength(1);
-    expect(opp.customFields?.['paLastSyncedAt']?.value).toBe('2026-04-15T00:00:00Z');
+    expect(opp.customFields?.['lastSyncedAt']?.value).toBe('2026-04-15T00:00:00Z');
   });
 
   it('produces output that passes full PaOpportunitySchema validation', () => {
